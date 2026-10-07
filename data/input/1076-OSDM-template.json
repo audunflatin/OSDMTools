@@ -13367,7 +13367,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601507",
+                      "code": "7601526",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -13401,7 +13401,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601507",
+                      "code": "7601526",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -55149,7 +55149,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601507",
+                      "code": "7601526",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -55183,7 +55183,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601507",
+                      "code": "7601526",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -57781,7 +57781,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601507",
+                      "code": "7601526",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -57815,7 +57815,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601507",
+                      "code": "7601526",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -261712,7 +261712,7 @@
             [
               {
                 "codeList": "UIC",
-                "code": "7601507",
+                "code": "7601526",
                 "country": "NO"
               }
             ]
@@ -262607,6 +262607,14 @@
           "legacyBorderPointCode": 0
         },
         {
+          "code": "7601526",
+          "name": "Horten",
+          "nameUtf8": "Horten",
+          "shortName": "Horten",
+          "shortNameUtf8": "Horten",
+          "legacyBorderPointCode": 0
+        },
+        {
           "code": "7600729",
           "name": "Hunderfossen",
           "nameUtf8": "Hunderfossen",
@@ -263140,14 +263148,6 @@
           "nameUtf8": "Skien",
           "shortName": "Skien",
           "shortNameUtf8": "Skien",
-          "legacyBorderPointCode": 0
-        },
-        {
-          "code": "7601507",
-          "name": "Skoppum",
-          "nameUtf8": "Skoppum",
-          "shortName": "Skoppum",
-          "shortNameUtf8": "Skoppum",
           "legacyBorderPointCode": 0
         },
         {
