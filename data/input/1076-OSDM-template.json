@@ -13367,7 +13367,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601526",
+                      "code": "7601515",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -13401,7 +13401,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601526",
+                      "code": "7601515",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -55149,7 +55149,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601526",
+                      "code": "7601515",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -55183,7 +55183,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601526",
+                      "code": "7601515",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -57781,7 +57781,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601526",
+                      "code": "7601515",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -57815,7 +57815,7 @@
                     "route": [],
                     "station": {
                       "codeList": "UIC",
-                      "code": "7601526",
+                      "code": "7601515",
                       "country": "NO"
                     },
                     "routeValidityType": "LINE",
@@ -343332,7 +343332,7 @@
             [
               {
                 "codeList": "UIC",
-                "code": "7601526",
+                "code": "7601515",
                 "country": "NO"
               }
             ]
@@ -344227,7 +344227,7 @@
           "legacyBorderPointCode": 0
         },
         {
-          "code": "7601526",
+          "code": "7601515",
           "name": "Horten",
           "nameUtf8": "Horten",
           "shortName": "Horten",
