@@ -195,7 +195,7 @@ Ingenting skrives til disk under generering.
 | `DATABASE_URL`   | SQLite-sti                           | SQLite lokalt               |
 | `RESEND_API_KEY` | API-nøkkel for Resend                | _(tom – e-post deaktivert)_ |
 | `SENDER_EMAIL`   | Avsenderadresse for e-poster         | `noreply@osdmtools.com`     |
-| `CONTACT_EMAIL`  | Fallback-mottaker for kontaktskjema  | _(må settes)_               |
+| `CONTACT_EMAIL`  | Fallback-mottaker for kontaktskjema  | `kontakt@osdmtools.com`     |
 | `APP_URL`        | Basis-URL i e-postlenker             | `https://osdmtools.com`     |
 
 ---

@@ -106,10 +106,10 @@ pip install -r requirements.txt
 | `DATABASE_URL`   | SQLite-sti (valgfri)                                 | SQLite lokalt               |
 | `RESEND_API_KEY` | API‑nøkkel for Resend (e-post)                       | _(tom – e-post deaktivert)_ |
 | `SENDER_EMAIL`   | Avsenderadresse for e-poster                         | `noreply@osdmtools.com`     |
-| `CONTACT_EMAIL`  | Mottaker for kontaktskjema og tilgangsforespørsler   | _(må settes)_               |
+| `CONTACT_EMAIL`  | Mottaker for kontaktskjema og tilgangsforespørsler   | `kontakt@osdmtools.com`     |
 | `APP_URL`        | Basis-URL i e-postlenker                             | `https://osdmtools.com`     |
 
-`RESEND_API_KEY` og `CONTACT_EMAIL` må settes for at e-postfunksjonene skal virke.
+`RESEND_API_KEY` må settes for at e-postfunksjonene skal virke.
 
 ### Start applikasjonen lokalt
 
