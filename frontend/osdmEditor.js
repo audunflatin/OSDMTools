@@ -149,7 +149,7 @@ async function saveMetadata() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || resp.statusText);
+    if (!resp.ok) throw new Error(errorDetail(await resp.json().catch(() => ({}))));
     showMsg("metaMsg", t("editor_metadata_saved"), "ok");
     if (_summary) _summary.delivery = { ..._summary.delivery, ...body };
   } catch (e) {
@@ -174,7 +174,7 @@ async function saveRatio(pcId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ratio }),
     });
-    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || resp.statusText);
+    if (!resp.ok) throw new Error(errorDetail(await resp.json().catch(() => ({}))));
     const data = await resp.json();
     showMsg(`ratioMsg-${pcId}`, `${data.updated_fares} ${t("editor_updated_fares")}`, "ok");
     if (_summary) {
@@ -206,7 +206,7 @@ async function addRelation() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_uic: fromUic, to_uic: toUic, adult_price_eur: adultPrice, distance }),
     });
-    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || resp.statusText);
+    if (!resp.ok) throw new Error(errorDetail(await resp.json().catch(() => ({}))));
     const data = await resp.json();
     showMsg("relMsg", `${data.fares_created} ${t("editor_fares_created")}`, "ok");
 

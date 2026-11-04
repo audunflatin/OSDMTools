@@ -101,7 +101,7 @@ adjustBtn.addEventListener("click", async () => {
     t("adjust_success"),
     ...deliverySummaryLines(res),
     `${t("label_factor")}: ${factor}`,
-    `${t("label_price_count")}: ${res.summary.faresUpdated}`,
+    ...priceChangeLines(res.summary, res.summary.faresUpdated),
   ].join("\n"), true);
   document.getElementById("downloadBtn").disabled = false;
   document.getElementById("downloadExcelBtn").disabled = false;

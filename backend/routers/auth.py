@@ -1,9 +1,10 @@
 """Innlogging, passord (bytte, glemt, tilbakestill) og Min konto."""
-from fastapi import APIRouter, Request, Form, HTTPException
+from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pathlib import Path
+from urllib.parse import urlencode
 from datetime import datetime, timezone, timedelta
-import logging, uuid
+import json, logging, uuid
 
 from backend.core.settings import APP_URL
 from backend.auth_db import SessionLocal, User, LoginLog, PasswordResetToken, EventLog
@@ -11,13 +12,17 @@ from backend.auth_utils import verify_password, hash_password, needs_rehash
 from backend.email_utils import send_reset_link_email
 from backend.core.security import _get_client_ip, _rate_limit_check, _rate_limit_reset, _rate_limit, _forgot_requests, require_login, log_event, _safe_next
 from backend.core.pages import serve_page
+from backend.core.errors import AppError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_LOGIN_ERRORS = ("invalid_login", "login_rate_limited")
+
+
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, next: str = ""):
+def login_page(request: Request, next: str = "", error: str = ""):
     if "user_email" in request.session:
         return RedirectResponse("/", status_code=302)
     html = Path("frontend/login.html").read_text(encoding="utf-8")
@@ -27,13 +32,26 @@ def login_page(request: Request, next: str = ""):
             '<button type="submit"',
             f'<input type="hidden" name="next" value="{safe}"><button type="submit"'
         )
+    if error in _LOGIN_ERRORS:  # vises oversatt av login.html
+        html = html.replace("</head>", f"<script>window.LOGIN_ERROR = {json.dumps(error)};</script></head>", 1)
     return HTMLResponse(html)
+
+
+def _login_failed(code: str, next_url: str) -> RedirectResponse:
+    """Tilbake til innloggingssiden med feilkode (skjemaet postes direkte, så JSON-feil ville vist rå JSON)."""
+    params = {"error": code}
+    if _safe_next(next_url):
+        params["next"] = _safe_next(next_url)
+    return RedirectResponse(f"/login?{urlencode(params)}", status_code=303)
 
 
 @router.post("/login")
 def login(request: Request, email: str = Form(...), password: str = Form(...), next: str = Form("")):
     ip = _get_client_ip(request)
-    _rate_limit_check(ip)
+    try:
+        _rate_limit_check(ip)
+    except AppError:
+        return _login_failed("login_rate_limited", next)
     email = email.lower()
     db = SessionLocal()
     try:
@@ -42,7 +60,7 @@ def login(request: Request, email: str = Form(...), password: str = Form(...), n
             db.add(LoginLog(email=email, ip_address=ip, success=False))
             db.commit()
             log_event(email, "login_failed", "error", {"ip": ip})
-            raise HTTPException(status_code=401, detail="Ugyldig innlogging")
+            return _login_failed("invalid_login", next)
         _rate_limit_reset(ip)
         if needs_rehash(user.password_hash):
             user.password_hash = hash_password(password)  # oppgrader til dagens antall runder
@@ -81,17 +99,17 @@ def change_password(
     confirm: str = Form(...),
 ):
     if "user_email" not in request.session:
-        raise HTTPException(status_code=401, detail="Ikke innlogget")
+        raise AppError(401, "not_logged_in")
     if password != confirm:
-        raise HTTPException(status_code=400, detail="Passordene er ikke like")
+        raise AppError(400, "passwords_mismatch")
     if len(password) < 8:
-        raise HTTPException(status_code=400, detail="Passordet må være minst 8 tegn")
+        raise AppError(400, "password_too_short")
     email = request.session["user_email"]
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+            raise AppError(404, "user_not_found")
         user.password_hash = hash_password(password)
         user.must_change_password = False
         if user.first_login_at is None:
@@ -146,9 +164,9 @@ def reset_password_page(token: str):
 @router.post("/reset-password/{token}")
 def reset_password(token: str, password: str = Form(...), confirm: str = Form(...)):
     if password != confirm:
-        raise HTTPException(status_code=400, detail="Passordene er ikke like")
+        raise AppError(400, "passwords_mismatch")
     if len(password) < 8:
-        raise HTTPException(status_code=400, detail="Passordet må være minst 8 tegn")
+        raise AppError(400, "password_too_short")
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -157,10 +175,10 @@ def reset_password(token: str, password: str = Form(...), confirm: str = Form(..
             PasswordResetToken.expires_at > now,
         ).first()
         if not rt:
-            raise HTTPException(status_code=400, detail="Lenken er ugyldig eller utløpt")
+            raise AppError(400, "reset_link_invalid")
         user = db.query(User).filter(User.email == rt.email).first()
         if not user:
-            raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+            raise AppError(404, "user_not_found")
         user.password_hash = hash_password(password)
         user.must_change_password = False
         db.delete(rt)
@@ -188,7 +206,7 @@ def get_account(request: Request):
     with SessionLocal() as db:
         user = db.query(User).filter(User.email == user_email).first()
         if not user:
-            raise HTTPException(status_code=404)
+            raise AppError(404, "user_not_found")
         return {
             "email": user.email,
             "first_name": user.first_name or "",
@@ -205,7 +223,7 @@ def update_account_name(request: Request, first_name: str = Form(...), last_name
     with SessionLocal() as db:
         user = db.query(User).filter(User.email == user_email).first()
         if not user:
-            raise HTTPException(status_code=404)
+            raise AppError(404, "user_not_found")
         user.first_name = first_name
         user.last_name = last_name
         db.commit()
@@ -219,9 +237,9 @@ def delete_account(request: Request):
     with SessionLocal() as db:
         user = db.query(User).filter(User.email == user_email).first()
         if not user:
-            raise HTTPException(status_code=404)
+            raise AppError(404, "user_not_found")
         if user.is_admin:
-            raise HTTPException(status_code=403, detail="Admins kan ikke slette sin egen konto")
+            raise AppError(403, "admin_cannot_delete_account")
         db.query(EventLog).filter(EventLog.user_email == user_email).delete()
         db.query(LoginLog).filter(LoginLog.email == user_email).delete()
         db.query(PasswordResetToken).filter(PasswordResetToken.email == user_email).delete()

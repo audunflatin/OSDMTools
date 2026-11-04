@@ -3,7 +3,8 @@ import threading
 import time
 import uuid
 
-from fastapi import HTTPException, Request
+from fastapi import Request
+from backend.core.errors import AppError, error_payload
 
 
 TEN_STORE: dict[str, dict] = {}        # user_email → {"table": list[(fra_km, til_km, pris)], "created_at": float}
@@ -51,7 +52,7 @@ def owned_job(jobs: dict, job_id: str, request: Request) -> dict | None:
     """Hent jobb; None hvis den ikke finnes, HTTP 403 hvis en annen bruker eier den."""
     job = jobs.get(job_id)
     if job is not None and job.get("owner") != request.session.get("user_email"):
-        raise HTTPException(status_code=403, detail="Ikke tilgang")
+        raise AppError(403, "forbidden")
     return job
 
 
@@ -67,7 +68,7 @@ def file_job_progress(jobs: dict, job_id: str, request: Request) -> dict:
     Ferdige jobber returneres én gang og fjernes."""
     job = owned_job(jobs, job_id, request)
     if not job:
-        return {"status": "error", "error": "Jobb ikke funnet"}
+        return {"status": "error", "error": error_payload("job_not_found")}
     # Sjekk ferdig/feil først: en jobb som feiler i lesefasen (ugyldig JSON) står
     # fortsatt i phase «parsing», og ville ellers vist «reading» for alltid.
     if job["status"] in ("done", "error"):

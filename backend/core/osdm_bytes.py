@@ -4,25 +4,25 @@ import io
 import json
 
 import ijson
-from fastapi import HTTPException
+from backend.core.errors import AppError
 
 
 def check_fare_delivery(content: bytes) -> str | None:
-    """Rask struktursjekk uten full parsing. Returnerer feilmelding, eller None hvis OK."""
+    """Rask struktursjekk uten full parsing. Returnerer feilkode (se core/errors.py), eller None hvis OK."""
     try:
         for prefix, event, _ in ijson.parse(io.BytesIO(content)):
             if prefix == "fareDelivery.fareStructure" and event == "start_map":
                 return None
     except Exception:
-        return "Filen er ikke gyldig JSON"
-    return "Filen mangler fareDelivery.fareStructure"
+        return "invalid_json"
+    return "missing_fare_structure"
 
 
 def require_fare_delivery(content: bytes) -> None:
     """Som check_fare_delivery, men kaster HTTP 400 ved feil."""
-    error = check_fare_delivery(content)
-    if error:
-        raise HTTPException(status_code=400, detail=error)
+    code = check_fare_delivery(content)
+    if code:
+        raise AppError(400, code)
 
 
 def read_delivery(content: bytes) -> dict:

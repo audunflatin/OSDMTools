@@ -1,5 +1,5 @@
 """Prisregulering: skaler alle priser med fast prosent."""
-from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 import logging
 import time
@@ -10,6 +10,7 @@ from backend.core.pages import serve_page
 from backend.core.state import ADJUST_STORE
 from backend.routers.excel import start_xlsx_job
 from backend.routers.generate import stored_file_response
+from backend.core.errors import AppError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,23 +40,25 @@ def price_adjust(
     require_login(request)
     factor = 1 + pct / 100
     if factor <= 0:
-        raise HTTPException(status_code=400, detail="Ugyldig prosent")
+        raise AppError(400, "invalid_percent")
 
     try:
         content = osdm_file.file.read()
     except Exception:
-        raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
+        raise AppError(400, "file_unreadable")
 
     # Samme prislogikk som generering: ny voksenpris per (RC, carrier, klasse),
     # øvrige kategorier fra eksakte ratioer, FIP o.l. proporsjonalt.
     try:
         store_entry = osdm_editor.load_osdm(content)
     except (ValueError, KeyError, TypeError):
-        raise HTTPException(status_code=400, detail="Filen er ikke en gyldig OSDM fareDelivery")
+        raise AppError(400, "invalid_osdm")
     if not store_entry["data"]["fareDelivery"]["fareStructure"].get("prices"):
-        raise HTTPException(status_code=400, detail="Mangler felt i OSDM-strukturen: 'prices'")
+        raise AppError(400, "missing_prices")
 
+    before = osdm_editor.adult_prices_by_rc(store_entry)
     result = osdm_editor.scale_prices(store_entry, factor)
+    changes = osdm_editor.price_change_summary(store_entry, before)
     utc_offset = osdm_editor.apply_delivery_fields(
         store_entry, delivery_id, previous_delivery_id, optional_delivery, environment, valid_from, valid_to,
     )
@@ -81,6 +84,9 @@ def price_adjust(
             "utcOffset": utc_offset,
             "factor": factor,
             "faresUpdated": result["updated_fares"],
+            "rcsTotal": changes["rcsTotal"],
+            "rcsChanged": changes["rcsChanged"],
+            "priceExamples": changes["examples"],
         },
     }
 
@@ -97,5 +103,5 @@ def price_adjust_excel(request: Request):
     user_email = request.session["user_email"]
     entry = ADJUST_STORE.get(user_email)
     if not entry:
-        raise HTTPException(status_code=400, detail="Ingen regulert OSDM-fil tilgjengelig")
+        raise AppError(400, "no_result")
     return {"jobId": start_xlsx_job(entry["content"].encode("utf-8"), user_email)}

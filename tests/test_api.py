@@ -419,7 +419,7 @@ def test_fare_discount_parse_job():
 
     bad = client.post("/fare-discount/parse", files={"osdmFile": ("x.json", b"ikke json")}).json()
     p = _poll(client, f"/fare-discount/parse/progress/{bad['jobId']}")
-    assert p == {"status": "error", "percent": 0, "result": None, "error": "Filen er ikke gyldig JSON"}
+    assert p["status"] == "error" and p["error"]["code"] == "invalid_json"
 
 
 def test_validate_osdm_invalid_json_reports_error():
@@ -427,7 +427,8 @@ def test_validate_osdm_invalid_json_reports_error():
     client = _login("a@test.no")
     job = client.post("/ui/validate-osdm", files={"osdmFile": ("x.json", b"ikke json")}).json()
     p = _poll(client, f"/ui/validate-osdm/progress/{job['jobId']}")
-    assert p["status"] == "error" and p["error"] == "Filen er ikke gyldig JSON"
+    assert p["status"] == "error" and p["error"]["code"] == "invalid_json"
+    assert p["error"]["message"] == "Filen er ikke gyldig JSON"  # norsk reserve
 
 
 def test_login_upgrades_old_password_hash():
@@ -481,3 +482,64 @@ def test_fare_discount_result_can_be_exported_to_excel():
     _apply_discount(client)
     job = client.post("/fare-discount/excel").json()
     assert _poll(client, f"/frontend/osdm-to-csv-status/{job['jobId']}")["status"] == "done"
+
+
+def test_errors_have_translatable_codes():
+    """U4/S10: feil fra serveren har en kode frontend kan oversette, pluss norsk reservetekst."""
+    client = _login("a@test.no")
+    r = client.post("/ui/fix-osdm", files={"osdmFile": ("x.json", b"ikke json")})
+    assert r.status_code == 400
+    assert r.json()["detail"] == {"code": "invalid_json", "params": {}, "message": "Filen er ikke gyldig JSON"}
+
+    res = client.post("/ui/validate-ten", files={"tenFile": ("t.csv", "0;100;500\n100;x;900\n")}).json()
+    assert res["error"]["code"] == "ten_to_not_int" and res["error"]["params"] == {"line": 2, "value": "x"}
+
+
+def test_all_error_codes_are_translated_in_frontend():
+    """Hver kode i core/errors.py må finnes som srv_<kode> på alle fem språk i i18n.js."""
+    import re
+    from conftest import ROOT
+    from backend.core.errors import MESSAGES
+    i18n = (ROOT / "frontend" / "i18n.js").read_text(encoding="utf-8")
+    for code in MESSAGES:
+        assert len(re.findall(rf"\bsrv_{code}:", i18n)) == 5, code
+
+
+def test_failed_login_redirects_back_with_translated_error():
+    """Innloggingsskjemaet postes direkte – feil skal gi innloggingssiden med melding, ikke rå JSON."""
+    security._login_attempts.clear()
+    client = TestClient(main.app)
+    r = client.post("/login", data={"email": "a@test.no", "password": "feil", "next": "/price-adjust"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login?error=invalid_login&next=%2Fprice-adjust"
+    page = client.get(r.headers["location"]).text
+    assert 'window.LOGIN_ERROR = "invalid_login"' in page
+    assert 'name="next" value="/price-adjust"' in page
+    # Ukjente feilkoder injiseres ikke
+    assert "window.LOGIN_ERROR =" not in client.get("/login?error=<script>").text
+
+
+def test_price_adjust_summary_shows_changes_with_examples():
+    """U6: oppsummeringen viser antall relasjoner med ny voksenpris og eksempler før → etter."""
+    import re
+    client = _login("a@test.no")
+    from conftest import TEMPLATE_1076
+    r = client.post("/price-adjust", files={"osdm_file": ("1076.json", TEMPLATE_1076.read_bytes())}, data={
+        "pct": "5", "delivery_id": "7.3", "valid_from": "2026-12-13", "valid_to": "2027-12-11",
+    })
+    summary = r.json()["summary"]
+    assert summary["rcsTotal"] == 1166 and summary["rcsChanged"] == 1166
+    assert len(summary["priceExamples"]) == 5
+    for example in summary["priceExamples"]:
+        before, after = map(float, re.search(r": ([\d.]+) → ([\d.]+) EUR$", example).groups())
+        assert after > before and " km)" in example
+
+
+def test_price_adjust_zero_reports_no_changed_relations():
+    client = _login("a@test.no")
+    from conftest import TEMPLATE_1076
+    r = client.post("/price-adjust", files={"osdm_file": ("1076.json", TEMPLATE_1076.read_bytes())}, data={
+        "pct": "0", "delivery_id": "7.0", "valid_from": "2026-12-13", "valid_to": "2027-12-11",
+    })
+    summary = r.json()["summary"]
+    assert summary["rcsChanged"] == 0 and summary["priceExamples"] == []

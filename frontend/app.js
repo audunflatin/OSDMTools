@@ -50,7 +50,7 @@ async function validateTen() {
     document.getElementById("distanceSummary").innerHTML = "";
     show("stepOsdm");
   } else {
-    statusEl.innerText = `${t("err_ten_failed")}\n${res.error || t("unknown_error")}`;
+    statusEl.innerText = `${t("err_ten_failed")}\n${translateError(res.error)}`;
     statusEl.classList.add("status-error");
   }
 }
@@ -99,7 +99,7 @@ async function validateOsdm() {
           distEl.innerHTML = `<div class="check-ok">${t("distance_ok").replace("{rows}", res2.tenRows).replace("{rc}", res2.osdmRcCount)}</div>`;
         }
       } else if (res2.error) {
-        distEl.innerHTML = renderError(`${t("label_distance_check")}: ${res2.error}`);
+        distEl.innerHTML = renderError(`${t("label_distance_check")}: ${translateError(res2.error)}`);
       }
     } catch {
       hide("spinnerDistances");
@@ -189,7 +189,7 @@ async function generateOsdm() {
     const lines = [
       t("osdm_generated"),
       ...deliverySummaryLines(res),
-      `${t("label_price_count")}: ${res.summary.pricesUpdated}`,
+      ...priceChangeLines(res.summary, res.summary.pricesUpdated),
     ];
     // Relasjoner avstandsfilen ikke dekker beholder malens gamle priser
     if (res.summary.rcsSkipped > 0) {

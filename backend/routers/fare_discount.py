@@ -1,5 +1,5 @@
 """Fare-discount: legg til rabatterte farer i eksisterende OSDM."""
-from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 import base64, io, json, logging, re, time, uuid
 import ijson
@@ -12,6 +12,7 @@ from backend.core.state import DISCOUNT_STORE, PARSE_JOBS, start_file_job, file_
 from backend.routers.excel import start_xlsx_job
 from backend.routers.generate import stored_file_response
 from backend.core.osdm_bytes import _append_to_json_array, check_fare_delivery, require_fare_delivery, read_delivery
+from backend.core.errors import AppError, error_payload
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,9 +39,9 @@ def _run_fare_discount_parse(job_id: str, file_bytes: bytes) -> None:
             return io.BytesIO(file_bytes)
 
         job["phase"] = "parsing"
-        error = check_fare_delivery(file_bytes)
-        if error:
-            job.update({"status": "error", "error": error})
+        code = check_fare_delivery(file_bytes)
+        if code:
+            job.update({"status": "error", "error": error_payload(code)})
             return
 
         job["phase"] = "validating"
@@ -190,12 +191,12 @@ def fare_discount_apply(
     try:
         content = osdmFile.file.read()
     except Exception:
-        raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
+        raise AppError(400, "file_unreadable")
 
     try:
         station_pairs = json.loads(stationPairsJson)
     except Exception:
-        raise HTTPException(status_code=400, detail="Ugyldig stationPairsJson")
+        raise AppError(400, "invalid_station_pairs")
 
     require_fare_delivery(content)
 
@@ -222,7 +223,7 @@ def fare_discount_apply(
     if not station_pairs:
         matching_rc_ids = {rc["id"] for rc in regional_constraints}
         if not matching_rc_ids:
-            raise HTTPException(status_code=400, detail="OSDM-filen inneholder ingen regionalConstraints")
+            raise AppError(400, "no_regional_constraints")
     else:
         matching_rc_ids: set[str] = set()
         for pair in station_pairs:
@@ -231,7 +232,7 @@ def fare_discount_apply(
                 if {rc.get("entryConnectionPointId"), rc.get("exitConnectionPointId")} == pair_cps:
                     matching_rc_ids.add(rc["id"])
         if not matching_rc_ids:
-            raise HTTPException(status_code=400, detail="Ingen regionalConstraints funnet for valgte stasjonspar")
+            raise AppError(400, "no_rc_for_pairs")
 
     # nameRef → liste av passengerConstraint-IDer
     nameref_to_pc_ids: dict[str, list[str]] = {}
@@ -341,10 +342,7 @@ def fare_discount_apply(
         new_fares.append(new_fare)
 
     if not new_fares:
-        raise HTTPException(
-            status_code=400,
-            detail="Ingen eksisterende farer funnet for valgt kombinasjon av stasjoner, passasjerer og serviceklasse",
-        )
+        raise AppError(400, "no_matching_fares")
 
     # Append new items to arrays using byte-level operations
     result_bytes = content
@@ -388,5 +386,5 @@ def fare_discount_excel(request: Request):
     user_email = request.session["user_email"]
     entry = DISCOUNT_STORE.get(user_email)
     if not entry:
-        raise HTTPException(status_code=400, detail="Ingen rabattert OSDM-fil tilgjengelig")
+        raise AppError(400, "no_result")
     return {"jobId": start_xlsx_job(entry["content"], user_email)}

@@ -1,5 +1,5 @@
 """Offentlige sider og skjemaer: landingsside, personvern, robots/sitemap, kontakt og tilgangsforespørsel."""
-from fastapi import APIRouter, Request, Form, HTTPException
+from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, Response
 from pathlib import Path
 from datetime import datetime, timezone
@@ -10,6 +10,7 @@ from backend.email_utils import send_contact_email, send_access_request_email
 from backend.core.security import _get_client_ip, _rate_limit, _access_requests, _contact_sent, _CONTACT_MAX, _valid_email, require_login, log_event
 
 from backend.core.pages import serve_page
+from backend.core.errors import AppError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -97,7 +98,7 @@ def contact(
     user_email = request.session["user_email"]
     name, email, message = name.strip()[:200], email.strip()[:254], message.strip()[:5000]
     if not message:
-        raise HTTPException(status_code=400, detail="Meldingen er tom")
+        raise AppError(400, "message_empty")
     _rate_limit(_contact_sent, user_email, 3600, _CONTACT_MAX)
     try:
         send_contact_email(name, email, message)
@@ -123,7 +124,7 @@ def request_access(
     _rate_limit(_access_requests, ip, 86400, 3)
     email_clean      = email.strip().lower()
     if not _valid_email(email_clean):
-        raise HTTPException(status_code=400, detail="invalid_email")
+        raise AppError(400, "invalid_email")
     first_name_clean = first_name.strip()[:100]
     last_name_clean  = last_name.strip()[:100]
     name_clean       = f"{first_name_clean} {last_name_clean}".strip()

@@ -1,5 +1,5 @@
 """OSDM → Excel-eksport."""
-from fastapi import APIRouter, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse
 import io, logging, threading
 from datetime import datetime, timezone, timedelta
@@ -15,6 +15,7 @@ from backend.core.pages import serve_page
 from backend.core.state import XLSX_JOBS, create_job, owned_job
 
 from backend.core.osdm_bytes import require_fare_delivery, read_delivery
+from backend.core.errors import AppError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -413,7 +414,7 @@ def osdm_to_csv_status(job_id: str, request: Request):
     require_login(request)
     job = owned_job(XLSX_JOBS, job_id, request)
     if not job:
-        raise HTTPException(status_code=404, detail="Jobb ikke funnet")
+        raise AppError(404, "job_not_found")
     return {
         "status": job["status"],
         "percent": job.get("percent", 0),
@@ -427,7 +428,7 @@ def osdm_to_csv_download(job_id: str, request: Request):
     require_login(request)
     job = owned_job(XLSX_JOBS, job_id, request)
     if not job or job["status"] != "done":
-        raise HTTPException(status_code=404, detail="Fil ikke klar")
+        raise AppError(404, "file_not_ready")
     xlsx_bytes = job["result"]
     filename = _safe_filename(job["filename"] or "osdm.xlsx")  # jobben ryddes etter 2 t, så filen kan lastes ned flere ganger
     return StreamingResponse(

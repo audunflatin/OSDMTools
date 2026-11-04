@@ -37,7 +37,7 @@ async function convert() {
         downloadBtn.disabled = false;
         break;
       }
-      if (res.status === "error") throw new Error(res.error);
+      if (res.status === "error") throw new Error(translateError(res.error));
       showProgress("convertProgress", 50 + Math.round((res.percent || 0) / 2), "converting");
     }
   } catch (err) {

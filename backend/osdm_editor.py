@@ -465,9 +465,9 @@ def update_passenger_ratio(store_entry: dict, pc_id: str, new_ratio: float) -> d
     adult_id = store_entry["adult_id"]
 
     if pc_id == adult_id:
-        return {"error": "Kan ikke endre ratio for voksenkategorien"}
+        return {"error": "ratio_adult"}  # feilkode, se core/errors.py
     if not (0.0 <= new_ratio <= 2.0):
-        return {"error": "Ratio må være mellom 0 og 2"}
+        return {"error": "ratio_range"}
 
     prices_list: list = fs["prices"]
     fares_list: list = fs["fares"]
@@ -847,6 +847,41 @@ def serialize_with_new_prefix(store_entry: dict, delivery_id: str) -> tuple[str,
     if old_prefix and old_prefix != new_prefix:
         content = content.replace(old_prefix, new_prefix)
     return content, fare_provider
+
+
+def adult_prices_by_rc(store_entry: dict) -> dict[str, float]:
+    """Høyeste voksenpris (EUR) per RC – primærfaren, ikke FIP o.l."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    price_map = _build_price_map(fs["prices"])
+    result: dict[str, float] = {}
+    for fare in fs["fares"]:
+        if fare.get("reductionConstraintRef") or fare.get("passengerConstraintRef") != store_entry["adult_id"]:
+            continue
+        rc = fare.get("regionalConstraintRef")
+        eur = price_map.get(fare.get("priceRef", ""), 0.0)
+        if rc and eur > result.get(rc, 0.0):
+            result[rc] = eur
+    return result
+
+
+def rc_label(store_entry: dict, rc: dict) -> str:
+    """«Fra → Til (km)» for en RC, med stasjonsnavn der de finnes."""
+    cp_to_uic, names = store_entry["cp_to_uic"], store_entry["station_name_map"]
+    from_uic = cp_to_uic.get(rc.get("entryConnectionPointId", ""), "")
+    to_uic = cp_to_uic.get(rc.get("exitConnectionPointId", ""), "")
+    return (f"{names.get(from_uic, from_uic or '?')} → {names.get(to_uic, to_uic or '?')}"
+            f" ({rc.get('distance', '?')} km)")
+
+
+def price_change_summary(store_entry: dict, before: dict[str, float], limit: int = 5) -> dict:
+    """Oppsummering etter prisendring: antall RC-er med endret voksenpris og eksempler «før → etter»."""
+    after = adult_prices_by_rc(store_entry)
+    rcs = store_entry["data"]["fareDelivery"]["fareStructure"]["regionalConstraints"]
+    changed = [rc for rc in rcs if rc["id"] in before and rc["id"] in after
+               and abs(after[rc["id"]] - before[rc["id"]]) > 1e-9]
+    examples = [f"{rc_label(store_entry, rc)}: {before[rc['id']]:.2f} → {after[rc['id']]:.2f} EUR"
+                for rc in changed[:limit]]
+    return {"rcsTotal": len(rcs), "rcsChanged": len(changed), "examples": examples}
 
 
 def serialize_osdm(store_entry: dict) -> bytes:

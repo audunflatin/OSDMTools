@@ -1,5 +1,5 @@
 """Priser fra avstandsfil: TEN-validering, OSDM-validering, avstandssjekk, valutakurs, generering og nedlasting."""
-from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import Response
 import csv, io, json, logging, math, time
 import ijson
@@ -11,6 +11,7 @@ from backend.core.security import _safe_filename, require_login, log_event
 from backend.core.state import TEN_STORE, GENERATION_PROGRESS, OSDM_STORE, INPUT_OSDM_STORE, VALIDATION_JOBS, start_file_job, file_job_progress
 
 from backend.core.osdm_bytes import check_fare_delivery, read_delivery
+from backend.core.errors import AppError, error_payload
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -22,41 +23,41 @@ def validate_ten_csv(text: str):
 
     for i, row in enumerate(reader, start=1):
         if len(row) != 3:
-            return {"ok": False, "error": f"Linje {i}: feil kolonneantall (forventet 3, fikk {len(row)})"}
+            return {"ok": False, "error": error_payload("ten_columns", line=i, got=len(row))}
 
         frm, to, price = [c.strip().replace(" ", "").replace("\xa0", "") for c in row]
 
         try:
             frm_int = int(frm)
         except ValueError:
-            return {"ok": False, "error": f"Linje {i}: ugyldig 'fra'-verdi: '{frm}' er ikke et heltall"}
+            return {"ok": False, "error": error_payload("ten_from_not_int", line=i, value=frm)}
 
         try:
             to_int = int(to)
         except ValueError:
-            return {"ok": False, "error": f"Linje {i}: ugyldig 'til'-verdi: '{to}' er ikke et heltall"}
+            return {"ok": False, "error": error_payload("ten_to_not_int", line=i, value=to)}
 
         try:
             price_int = int(price)
         except ValueError:
-            return {"ok": False, "error": f"Linje {i}: ugyldig pris: '{price}' er ikke et heltall"}
+            return {"ok": False, "error": error_payload("ten_price_not_int", line=i, value=price)}
 
         if frm_int < 0 or to_int < 0:
-            return {"ok": False, "error": f"Linje {i}: negative km-verdier er ikke tillatt"}
+            return {"ok": False, "error": error_payload("ten_negative_km", line=i)}
 
         if frm_int >= to_int:
-            return {"ok": False, "error": f"Linje {i}: 'fra' ({frm_int}) må være mindre enn 'til' ({to_int})"}
+            return {"ok": False, "error": error_payload("ten_from_ge_to", line=i, from_km=frm_int, to_km=to_int)}
 
         if price_int <= 0:
-            return {"ok": False, "error": f"Linje {i}: pris må være større enn 0 (fikk {price_int})"}
+            return {"ok": False, "error": error_payload("ten_price_not_positive", line=i, price=price_int)}
 
         if rows and frm_int != rows[-1][1]:
-            return {"ok": False, "error": f"Linje {i}: gap eller overlapp i km-intervall (forrige til={rows[-1][1]}, denne fra={frm_int})"}
+            return {"ok": False, "error": error_payload("ten_gap", line=i, prev_to=rows[-1][1], from_km=frm_int)}
 
         rows.append((frm_int, to_int, price_int))
 
     if not rows:
-        return {"ok": False, "error": "Filen er tom"}
+        return {"ok": False, "error": error_payload("ten_empty")}
 
     return {
         "ok": True,
@@ -90,9 +91,9 @@ def _run_osdm_validation(job_id: str, file_bytes: bytes) -> None:
 
         # --- Check basic structure (stop at first key, no large objects) ---
         job["phase"] = "parsing"
-        error = check_fare_delivery(file_bytes)
-        if error:
-            job.update({"status": "error", "error": error})
+        code = check_fare_delivery(file_bytes)
+        if code:
+            job.update({"status": "error", "error": error_payload(code)})
             return
 
         job["phase"] = "validating"
@@ -176,23 +177,21 @@ def _run_osdm_validation(job_id: str, file_bytes: bytes) -> None:
         }
         for field, ids in missing.items():
             if ids:
-                examples = ", ".join(sorted(ids)[:5])
-                more = f" (+ {len(ids) - 5} til)" if len(ids) > 5 else ""
-                warnings.append(f"{len(ids)} fare(r) peker på ukjent {field} i {label_map[field]}: {examples}{more}")
+                warnings.append(error_payload("w_unknown_ref", count=len(ids), field=field, section=label_map[field],
+                                              examples=", ".join(sorted(ids)[:5]), extra=max(0, len(ids) - 5)))
         if rc_bad_cps:
-            examples = "; ".join(rc_bad_cps[:3])
-            more = f" (+ {len(rc_bad_cps) - 3} til)" if len(rc_bad_cps) > 3 else ""
-            warnings.append(f"RC-er med ugyldig CP-referanse: {examples}{more}")
+            warnings.append(error_payload("w_bad_cp_refs", examples="; ".join(rc_bad_cps[:3]),
+                                          extra=max(0, len(rc_bad_cps) - 3)))
 
         unused_prices = price_ids - used_price_ids
         unused_pcs    = pc_ids - used_pc_ids
         unused_rcs    = rc_ids - used_rc_ids
         if unused_prices:
-            warnings.append(f"{len(unused_prices)} pris(er) er definert men ikke referert av noen fare")
+            warnings.append(error_payload("w_unused_prices", count=len(unused_prices)))
         if unused_pcs:
-            warnings.append(f"{len(unused_pcs)} passengerConstraint(s) er definert men ikke referert av noen fare")
+            warnings.append(error_payload("w_unused_pcs", count=len(unused_pcs)))
         if unused_rcs:
-            warnings.append(f"{len(unused_rcs)} regionalConstraint(s) er definert men ikke referert av noen fare")
+            warnings.append(error_payload("w_unused_rcs", count=len(unused_rcs)))
 
         job["percent"] = 92
 
@@ -252,7 +251,7 @@ def validate_distances(
     try:
         csv_text = (distanceFile.file.read()).decode("utf-8-sig")
     except Exception:
-        return {"ok": False, "error": "Kunne ikke lese avstandsfilen"}
+        return {"ok": False, "error": error_payload("ten_unreadable")}
 
     ten_result = validate_ten_csv(csv_text)
     if not ten_result["ok"]:
@@ -263,11 +262,11 @@ def validate_distances(
     try:
         data = json.loads(osdmFile.file.read())
     except Exception:
-        return {"ok": False, "error": "OSDM-filen er ikke gyldig JSON"}
+        return {"ok": False, "error": error_payload("invalid_json")}
 
     fs = data.get("fareDelivery", {}).get("fareStructure", {})
     if not fs:
-        return {"ok": False, "error": "OSDM-filen mangler fareDelivery.fareStructure"}
+        return {"ok": False, "error": error_payload("missing_fare_structure")}
 
     # Stasjonsnavn fra stationNames
     station_names: dict[str, str] = {
@@ -303,29 +302,17 @@ def validate_distances(
     def ten_covers(km: int) -> bool:
         return any(frm <= km <= til for frm, til, _ in ten_table)
 
-    warnings: list[str] = []
-    uncovered: list[str] = []
-
-    for km, routes in sorted(osdm_distances.items()):
-        if not ten_covers(km):
-            example = routes[0]
-            more = f" (+ {len(routes) - 1} RC til med samme avstand)" if len(routes) > 1 else ""
-            uncovered.append(f"{km} km ({example}{more})")
-
+    warnings: list[dict] = []
+    uncovered = [f"{km} km ({routes[0]})" for km, routes in sorted(osdm_distances.items()) if not ten_covers(km)]
     if uncovered:
         cap = 15
-        examples = "; ".join(uncovered[:cap])
-        more = f" (+ {len(uncovered) - cap} til)" if len(uncovered) > cap else ""
-        warnings.append(
-            f"{len(uncovered)} avstandsverdi(er) fra OSDM dekkes ikke av TEN-tabellen: {examples}{more}"
-        )
+        warnings.append(error_payload("w_distance_uncovered", count=len(uncovered),
+                                      examples="; ".join(uncovered[:cap]), extra=max(0, len(uncovered) - cap)))
 
     ten_max = ten_table[-1][1]
     osdm_max = max(osdm_distances.keys()) if osdm_distances else 0
     if osdm_max > ten_max:
-        warnings.append(
-            f"OSDM har ruter opp til {osdm_max} km, men TEN-tabellen slutter på {ten_max} km"
-        )
+        warnings.append(error_payload("w_distance_max", osdm_max=osdm_max, ten_max=ten_max))
 
     return {
         "ok": True,
@@ -353,7 +340,7 @@ def exchange_rate(request: Request, from_: str = "EUR", to: str = "NOK"):
         return {"ok": True, "from": from_.upper(), "to": to.upper(), "rate": rate, "date": payload.get("date")}
     except Exception as exc:
         logger.warning("Kunne ikke hente valutakurs %s→%s: %s", from_, to, exc)
-        return {"ok": False, "error": "Kunne ikke hente valutakurs fra frankfurter.app"}
+        return {"ok": False, "error": error_payload("exchange_rate_failed")}
 
 
 def nok_price_from_distance(ten_table: list, km: int):
@@ -380,11 +367,11 @@ def generate_osdm(
 
     ten_entry = TEN_STORE.get(user_email)
     if not ten_entry:
-        raise HTTPException(status_code=400, detail="TEN-CSV er ikke validert")
+        raise AppError(400, "ten_not_validated")
 
     input_entry = INPUT_OSDM_STORE.get(user_email)
     if not input_entry:
-        raise HTTPException(status_code=400, detail="OSDM-malfil er ikke lastet opp og validert")
+        raise AppError(400, "osdm_not_validated")
 
     progress = {"status": "running", "percent": 0, "created_at": time.time()}
     GENERATION_PROGRESS[user_email] = progress
@@ -428,38 +415,12 @@ def _generate_osdm(
         progress["percent"] = int(idx / total * 60)
 
     # Set all prices using ratios inferred from the uploaded OSDM file
+    before = osdm_editor.adult_prices_by_rc(store_entry)
     result = osdm_editor.set_prices_from_adult(store_entry, rc_adult_prices)
+    changes = osdm_editor.price_change_summary(store_entry, before)
     progress["percent"] = 90
 
-    # Build example fares from first few RCs that got prices
-    cp_to_uic = store_entry["cp_to_uic"]
-    station_name_map = store_entry["station_name_map"]
-
-    def _rc_label(rc: dict) -> str:
-        from_uic = cp_to_uic.get(rc.get("entryConnectionPointId", ""), "")
-        to_uic = cp_to_uic.get(rc.get("exitConnectionPointId", ""), "")
-        from_name = station_name_map.get(from_uic, from_uic or "?")
-        to_name = station_name_map.get(to_uic, to_uic or "?")
-        return f"{from_name} → {to_name} ({rc.get('distance', '?')} km)"
-
-    skipped_examples = [_rc_label(rc) for rc in skipped_rcs[:5]]
-    examples: dict[str, str] = {}
-    example_idx = 1
-    for rc in rcs:
-        if example_idx > 5:
-            break
-        rc_id = rc["id"]
-        if rc_id not in rc_adult_prices:
-            continue
-        from_uic = cp_to_uic.get(rc.get("entryConnectionPointId", ""), "")
-        to_uic = cp_to_uic.get(rc.get("exitConnectionPointId", ""), "")
-        from_name = station_name_map.get(from_uic, from_uic or "?")
-        to_name = station_name_map.get(to_uic, to_uic or "?")
-        adult_eur = osdm_editor.round_up_020(rc_adult_prices[rc_id])
-        examples[f"example_{example_idx}"] = (
-            f"{from_name} → {to_name}: {adult_eur:.2f} EUR ({rc.get('distance', '?')} km)"
-        )
-        example_idx += 1
+    skipped_examples = [osdm_editor.rc_label(store_entry, rc) for rc in skipped_rcs[:5]]
 
     content, fare_provider = osdm_editor.serialize_with_new_prefix(store_entry, datasetId)
 
@@ -488,7 +449,9 @@ def _generate_osdm(
             "exchangeRate": exchangeRate,
             "environment": environment,
             "utcOffset": utc_offset_from,
-            "exampleFares": examples,
+            "rcsTotal": changes["rcsTotal"],
+            "rcsChanged": changes["rcsChanged"],
+            "priceExamples": changes["examples"],
             "rcsSkipped": len(skipped_rcs),
             "rcsSkippedExamples": skipped_examples,
         },
@@ -507,7 +470,7 @@ def excel_from_generated(request: Request):
     user_email = request.session.get("user_email", "")
     osdm_entry = OSDM_STORE.get(user_email)
     if not osdm_entry:
-        raise HTTPException(status_code=400, detail="Ingen generert OSDM-fil tilgjengelig")
+        raise AppError(400, "no_result")
 
     osdm_bytes = osdm_entry["content"].encode("utf-8") if isinstance(osdm_entry["content"], str) else osdm_entry["content"]
 
@@ -523,7 +486,7 @@ def download_osdm(filename: str, request: Request):
 def stored_file_response(entry: dict | None, filename: str) -> Response:
     """Last ned en lagret OSDM-fil (generert eller regulert) hvis filnavnet stemmer."""
     if not entry or entry["filename"] != filename:
-        raise HTTPException(status_code=404, detail="OSDM-fil finnes ikke")
+        raise AppError(404, "file_not_found")
     return Response(
         content=entry["content"],
         media_type="application/json",

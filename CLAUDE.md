@@ -156,6 +156,8 @@ Tidligere grupperte prisregulering på `fareConstraintBundleRef` (feltet heter `
 | 5 | `GET /ui/download-osdm/{filename}` | Serverer `OSDM_STORE[user_email]` (krever innlogging) |
 | 6 | `POST /ui/excel-from-generated` | Konverterer `OSDM_STORE[user_email]` til Excel (async) |
 
+Generering og prisregulering returnerer også `rcsTotal`, `rcsChanged` og `priceExamples` (voksenpris «før → etter» for inntil 5 relasjoner) fra `osdm_editor.price_change_summary()`; frontend viser dem med `priceChangeLines()` i common.js.
+
 Genereringsresultatet rapporterer `rcsSkipped` / `rcsSkippedExamples`: RC-er uten avstand eller utenfor avstandsfilen beholder malens gamle priser, og frontend viser en advarsel.
 
 ### Delivery-felt som settes ved generering
@@ -331,30 +333,32 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | Fil | Versjon |
 |---|---|
 | `styles.css` | v=29 |
-| `i18n.js` | v=58 (alle hovudsider) / v=19 (login-sider) |
-| `app.js` | v=25 |
-| `admin.js` | v=21 |
+| `i18n.js` | v=60 (alle sider, også innloggingssidene) |
+| `app.js` | v=27 |
+| `admin.js` | v=22 |
 | `admin-log.js` | v=4 |
-| `osdmtoExcel.js` | v=8 |
+| `osdmtoExcel.js` | v=9 |
 | `fareDiscount.js` | v=20 |
-| `priceAdjust.js` | v=12 |
+| `priceAdjust.js` | v=13 |
 | `fixOsdm.js` | v=4 |
-| `osdmEditor.js` | v=3 |
+| `osdmEditor.js` | v=4 |
 | `stationLookup.js` | v=1 |
 | `presentation.js` | v=8 |
-| `common.js` | v=3 (alle verktøysider) |
+| `common.js` | v=5 (alle verktøysider) |
 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-HTML-filer som laster `i18n.js` med v=58:
-`landing.html`, `index.html`, `admin.html`, `admin-log.html`, `fare-discount.html`,
-`contact.html`, `min-konto.html`, `osdmtoexcel.html`, `price-adjust.html`, `fix-osdm.html`, `osdm-editor.html`, `station-lookup.html`
-
-HTML-filer med eldre i18n.js (v=19, endres ikke nå):
-`login.html`, `change_password.html`, `forgot_password.html`, `reset_password.html`
+Alle HTML-filer laster `i18n.js` med samme versjon (v=60) — bump alle samtidig.
 
 ---
+
+## Feilmeldinger fra serveren – koder, ikke tekst
+
+Serveren sender aldri ferdig tekst til brukeren. Bruk `AppError(status, "kode", **params)` (HTTP-feil) eller `error_payload("kode", **params)` (feltet `error` i JSON, jobbfeil, advarsler) fra `backend/core/errors.py`. Svaret blir `{code, params, message}` der `message` er norsk reserve.
+Frontend viser `translateError(err)` (i `i18n.js`) → `t("srv_" + code)` med `{param}` satt inn; `params.extra` gir « (+ N til)». `errorDetail`, `pollJob` og `renderWarnings` i common.js gjør dette automatisk.
+**Ny kode:** legg til norsk tekst i `MESSAGES` og `srv_<kode>` på alle fem språk — `test_all_error_codes_are_translated_in_frontend` feiler ellers.
+Innlogging er et vanlig skjema: feil gir redirect til `/login?error=<kode>` (ikke JSON).
 
 ## i18n – legge til ny tekst
 

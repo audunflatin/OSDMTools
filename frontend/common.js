@@ -106,11 +106,11 @@ function uploadAndWait(url, formData, progressId, stage = "processing") {
   });
 }
 
-/** Feilmelding fra FastAPI-svar ({detail: "…"} eller valideringsliste). */
+/** Oversatt feilmelding fra FastAPI-svar ({detail: {code, …}} / {detail: "…"} / valideringsliste). */
 function errorDetail(data) {
   const d = data && data.detail;
   if (Array.isArray(d)) return d.map(e => `${(e.loc || []).join(".")} – ${e.msg}`).join("; ");
-  return d || (data && data.error) || t("unknown_error");
+  return translateError(d || (data && data.error));
 }
 
 async function pollJob(jobId, progressEndpoint, containerId, base = 0) {
@@ -120,7 +120,7 @@ async function pollJob(jobId, progressEndpoint, containerId, base = 0) {
       const r = await fetch(`${progressEndpoint}/${jobId}`);
       const data = await r.json();
       if (data.status === "done") return data.result;
-      if (data.status === "error") return { ok: false, error: data.error };
+      if (data.status === "error") return { ok: false, error: translateError(data.error) };
       const pct = base + Math.round((data.percent || 0) / 100 * (100 - base));
       showProgress(containerId, pct, data.stage || "validating");
     } catch {
@@ -194,7 +194,7 @@ function renderError(msg) {
 /** Valideringsadvarsler, eller grønn hake hvis ingen. */
 function renderWarnings(warnings, title, footer) {
   if (!warnings || !warnings.length) return `<div class="check-ok">${t("osdm_no_warnings")}</div>`;
-  const items = warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("");
+  const items = warnings.map(w => `<li>${escapeHtml(translateError(w))}</li>`).join("");
   return `<div class="warnings-box">
     <div class="warnings-title">⚠ ${title} (${warnings.length})</div>
     <ul class="warnings-list">${items}</ul>
@@ -234,6 +234,18 @@ function deliverySummaryLines(res) {
   ];
 }
 
+/** Linjer om prisendringen: oppdaterte farer, relasjoner med ny voksenpris og eksempler før → etter. */
+function priceChangeLines(summary, faresUpdated) {
+  const lines = [
+    `${t("label_fares_updated")}: ${faresUpdated.toLocaleString()}`,
+    `${t("label_rcs_changed")}: ${summary.rcsChanged.toLocaleString()} / ${summary.rcsTotal.toLocaleString()}`,
+  ];
+  if (summary.priceExamples && summary.priceExamples.length) {
+    lines.push("", `${t("label_price_examples")}:`, ...summary.priceExamples.map(e => `  • ${e}`));
+  }
+  return lines;
+}
+
 // ── Excel-eksport av lagret resultat ──────────────────────────────────────────
 
 /** Start Excel-jobb via `startUrl`, vent til den er ferdig og last ned. */
@@ -249,7 +261,7 @@ async function exportExcel(startUrl, btnId = "downloadExcelBtn", spinnerId = "sp
       await new Promise(r => setTimeout(r, 800));
       const s = await (await fetch(`/frontend/osdm-to-csv-status/${res.jobId}`)).json();
       if (s.status === "done") { window.location.href = `/frontend/osdm-to-csv-download/${res.jobId}`; break; }
-      if (s.status === "error") throw new Error(s.error);
+      if (s.status === "error") throw new Error(translateError(s.error));
     }
   } catch {
     showResult(t("err_excel_failed"), false);

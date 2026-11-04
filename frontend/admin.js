@@ -69,7 +69,7 @@ async function approveRequest(email) {
     loadPendingRequests();
     loadUserList();
   } else {
-    setResult(resultEl, res.detail || t("unknown_error"), false);
+    setResult(resultEl, translateError(res.detail), false);
   }
 }
 
@@ -84,7 +84,7 @@ async function rejectRequest(email) {
     setResult(resultEl, t("rejected_ok"), true);
     loadPendingRequests();
   } else {
-    setResult(resultEl, res.detail || t("unknown_error"), false);
+    setResult(resultEl, translateError(res.detail), false);
   }
 }
 
@@ -204,7 +204,7 @@ async function setAdmin(email, makeAdmin) {
     setResult(resultEl, `${res.email} ${makeAdmin ? t("admin_granted") : t("admin_removed")}`, true);
     loadUserList();
   } else {
-    setResult(resultEl, res.detail || t("unknown_error"), false);
+    setResult(resultEl, translateError(res.detail), false);
   }
 }
 
@@ -219,7 +219,7 @@ async function deleteUser(email) {
     setResult(resultEl, `${res.deleted} ${t("user_deleted")}`, true);
     loadUserList();
   } else {
-    setResult(resultEl, res.detail || t("unknown_error"), false);
+    setResult(resultEl, translateError(res.detail), false);
   }
 }
 
@@ -243,7 +243,7 @@ document.getElementById("addUserForm").onsubmit = async e => {
     document.getElementById("newUserIsAdmin").checked = false;
     loadUserList();
   } else {
-    setResult(addResultEl, res.detail || t("unknown_error"), false);
+    setResult(addResultEl, translateError(res.detail), false);
   }
 };
 

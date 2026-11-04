@@ -1,5 +1,5 @@
 """Rydd opp i OSDM: fjern farer med brutte referanser og ubrukte elementer."""
-from fastapi import APIRouter, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 import io, json, logging, time
 import ijson
@@ -8,6 +8,7 @@ from backend.core.security import _safe_filename, require_login, log_event
 from backend.core.pages import serve_page
 from backend.core.state import FIX_OSDM_STORE
 from backend.core.osdm_bytes import _find_section_span, _apply_byte_replacements, _ijson_default, require_fare_delivery
+from backend.core.errors import AppError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,7 +21,7 @@ def fix_osdm(request: Request, osdmFile: UploadFile = File(...)):
     try:
         content = osdmFile.file.read()
     except Exception:
-        raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
+        raise AppError(400, "file_unreadable")
 
     require_fare_delivery(content)
 
@@ -116,7 +117,7 @@ def fix_osdm(request: Request, osdmFile: UploadFile = File(...)):
         pc_span     = _find_section_span(result_bytes, "passengerConstraints")
         rc_span     = _find_section_span(result_bytes, "regionalConstraints")
     except KeyError as e:
-        raise HTTPException(status_code=500, detail=f"Intern feil: mangler nøkkel {e}")
+        raise AppError(500, "internal_error", detail=f"mangler nøkkel {e}")
 
     result_bytes = _apply_byte_replacements(result_bytes, [
         (prices_span[0], prices_span[1], json.dumps(prices_filtered, ensure_ascii=False, default=_ijson_default).encode("utf-8")),
@@ -140,10 +141,10 @@ def fix_osdm(request: Request, osdmFile: UploadFile = File(...)):
 async def fix_osdm_download(request: Request):
     user_email = request.session.get("user_email")
     if not user_email:
-        raise HTTPException(status_code=401, detail="Ikke innlogget")
+        raise AppError(401, "not_logged_in")
     entry = FIX_OSDM_STORE.get(user_email)
     if not entry:
-        raise HTTPException(status_code=404, detail="Ingen fikset fil funnet — last opp og analyser først")
+        raise AppError(404, "no_result")
     log_event(user_email, "osdm_fixed", detail={"filename": entry["filename"]})
     return Response(
         content=entry["content"],

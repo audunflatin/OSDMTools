@@ -1,9 +1,10 @@
 """Tilgangskontroll, rate limiting, logging og små sikkerhetshjelpere."""
-from fastapi import Request, HTTPException
+from fastapi import Request
 from collections import defaultdict
 import json, re, time
 
 from backend.auth_db import SessionLocal, User, EventLog
+from backend.core.errors import AppError
 
 
 _login_attempts: dict[str, list[float]] = defaultdict(list)
@@ -21,7 +22,7 @@ def _rate_limit_check(ip: str):
     now = time.time()
     _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < _LOGIN_WINDOW]
     if len(_login_attempts[ip]) >= _LOGIN_MAX:
-        raise HTTPException(status_code=429, detail="For mange innloggingsforsøk. Prøv igjen om litt.")
+        raise AppError(429, "login_rate_limited")
     _login_attempts[ip].append(now)
 
 def _rate_limit_reset(ip: str):
@@ -32,7 +33,7 @@ def _rate_limit(store: dict[str, list[float]], key: str, window: int, max_count:
     now = time.time()
     store[key] = [t for t in store[key] if now - t < window]
     if len(store[key]) >= max_count:
-        raise HTTPException(status_code=429, detail="rate_limited")
+        raise AppError(429, "rate_limited")
     store[key].append(now)
 
 
@@ -55,7 +56,7 @@ def _safe_filename(name: str) -> str:
 
 def require_login(request: Request):
     if "user_email" not in request.session:
-        raise HTTPException(status_code=401, detail="Ikke innlogget")
+        raise AppError(401, "not_logged_in")
 
 def _check_is_admin_from_db(request: Request) -> bool:
     """Les is_admin direkte fra DB og oppdater sesjonen. Returnerer True/False."""
@@ -71,7 +72,7 @@ def _check_is_admin_from_db(request: Request) -> bool:
 def require_admin(request: Request):
     require_login(request)
     if not _check_is_admin_from_db(request):
-        raise HTTPException(status_code=403, detail="Ikke administrator")
+        raise AppError(403, "not_admin")
 
 
 def log_event(

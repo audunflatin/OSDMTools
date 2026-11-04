@@ -1,5 +1,5 @@
 """Administrasjon: brukere, tilgangsforespørsler, innloggings- og aktivitetslogg (kun admin)."""
-from fastapi import APIRouter, Request, Form, HTTPException
+from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from datetime import datetime, timedelta
 import json, logging
@@ -9,6 +9,7 @@ from backend.auth_utils import generate_password, hash_password
 from backend.email_utils import send_welcome_email
 from backend.core.security import _valid_email, _check_is_admin_from_db, require_admin, log_event
 from backend.core.pages import serve_page
+from backend.core.errors import AppError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -47,11 +48,11 @@ def admin_add_user(
     require_admin(request)
     email = email.strip().lower()
     if not _valid_email(email):
-        raise HTTPException(status_code=400, detail="Ugyldig e-postadresse")
+        raise AppError(400, "invalid_email")
     db = SessionLocal()
     try:
         if db.query(User).filter(User.email == email).first():
-            raise HTTPException(status_code=400, detail="Bruker finnes allerede")
+            raise AppError(400, "user_exists")
         password = generate_password()
         db.add(User(
             email=email,
@@ -80,12 +81,12 @@ def admin_set_admin(request: Request, email: str = Form(...), is_admin: str = Fo
     require_admin(request)
     email = email.lower()
     if email == request.session.get("user_email"):
-        raise HTTPException(status_code=400, detail="Kan ikke endre din egen admin-status")
+        raise AppError(400, "cannot_change_own_admin")
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+            raise AppError(404, "user_not_found")
         user.is_admin = (is_admin.lower() == "true")
         db.commit()
         log_event(request.session.get("user_email"), "admin_set_admin", detail={
@@ -100,12 +101,12 @@ def delete_user(request: Request, email: str = Form(...)):
     require_admin(request)
     email = email.lower()
     if email == request.session.get("user_email"):
-        raise HTTPException(status_code=400, detail="Kan ikke slette deg selv")
+        raise AppError(400, "cannot_delete_self")
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+            raise AppError(404, "user_not_found")
         db.delete(user)
         db.commit()
         log_event(request.session.get("user_email"), "admin_user_deleted", detail={"email": email})
@@ -141,7 +142,7 @@ def admin_approve_request(request: Request, email: str = Form(...)):
     with SessionLocal() as db:
         req = db.query(AccessRequest).filter(AccessRequest.email == email).first()
         if not req or req.status != "pending":
-            raise HTTPException(status_code=404, detail="Forespørsel ikke funnet")
+            raise AppError(404, "request_not_found")
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             req.status = "approved"
@@ -177,7 +178,7 @@ def admin_reject_request(request: Request, email: str = Form(...)):
     with SessionLocal() as db:
         req = db.query(AccessRequest).filter(AccessRequest.email == email).first()
         if not req:
-            raise HTTPException(status_code=404, detail="Forespørsel ikke funnet")
+            raise AppError(404, "request_not_found")
         req.status = "rejected"
         db.commit()
     log_event(request.session.get("user_email"), "admin_request_rejected", detail={"email": email})
