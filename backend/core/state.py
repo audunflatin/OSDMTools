@@ -10,6 +10,7 @@ TEN_STORE: dict[str, dict] = {}        # user_email → {"table": list[(fra_km, 
 GENERATION_PROGRESS: dict[str, dict] = {}  # user_email → {"status": str, "percent": int, "created_at": float}
 OSDM_STORE: dict[str, dict] = {}       # user_email → {"filename": str, "content": str}
 ADJUST_STORE: dict[str, dict] = {}     # user_email → {"filename": str, "content": str} (prisregulering)
+DISCOUNT_STORE: dict[str, dict] = {}   # user_email → {"filename": str, "content": bytes} (fare-discount)
 INPUT_OSDM_STORE: dict[str, dict] = {} # user_email → {"filename": str, "bytes": bytes, "created_at": float}
 FIX_OSDM_STORE: dict[str, dict] = {}  # user_email → {"filename": str, "content": bytes}
 EDIT_STORE: dict[str, dict] = {}       # user_email → osdm_editor store entry + {"filename": str, "created_at": float}
@@ -23,7 +24,7 @@ def _cleanup_jobs():
     while True:
         time.sleep(600)
         cutoff = time.time() - _JOB_TTL
-        for jobs in (XLSX_JOBS, VALIDATION_JOBS, PARSE_JOBS, OSDM_STORE, ADJUST_STORE, INPUT_OSDM_STORE, FIX_OSDM_STORE,
+        for jobs in (XLSX_JOBS, VALIDATION_JOBS, PARSE_JOBS, OSDM_STORE, ADJUST_STORE, DISCOUNT_STORE, INPUT_OSDM_STORE, FIX_OSDM_STORE,
                      EDIT_STORE, TEN_STORE, GENERATION_PROGRESS):
             stale = [k for k, v in list(jobs.items()) if v.get("created_at", 0) < cutoff]
             for k in stale:

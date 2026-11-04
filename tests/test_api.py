@@ -246,8 +246,12 @@ def _apply_discount(client, carrier_codes=()):
         data["carrierCodes"] = list(carrier_codes)
     r = client.post("/fare-discount/apply", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())}, data=data)
     assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] and body["summary"]["fareCount"] > 0
+    download = client.get(f"/fare-discount/download/{body['outputFile']}")
+    assert download.status_code == 200
     original = json.loads(TEMPLATE_1076.read_bytes())["fareDelivery"]["fareStructure"]
-    out = json.loads(r.content)["fareDelivery"]["fareStructure"]
+    out = json.loads(download.content)["fareDelivery"]["fareStructure"]
     new_fares = out["fares"][len(original["fares"]):]
     assert new_fares
     return original, out, new_fares
@@ -470,3 +474,10 @@ def test_admin_sees_admin_menu_with_active_sublink():
     assert re.findall(r'class="sidebar-sublink active"', html) and 'href="/admin/log" class="sidebar-sublink active"' in html
     assert 'id="sidebarPendingBadge"' in html
     assert "sidebar-link active" not in html
+
+
+def test_fare_discount_result_can_be_exported_to_excel():
+    client = _login("a@test.no")
+    _apply_discount(client)
+    job = client.post("/fare-discount/excel").json()
+    assert _poll(client, f"/frontend/osdm-to-csv-status/{job['jobId']}")["status"] == "done"

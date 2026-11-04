@@ -1,14 +1,16 @@
 """Fare-discount: legg til rabatterte farer i eksisterende OSDM."""
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, Response
-import base64, io, json, logging, re, uuid
+from fastapi.responses import HTMLResponse
+import base64, io, json, logging, re, time, uuid
 import ijson
 
 import backend.osdm_editor as osdm_editor
 from backend.rics_codes import RICS_CODES as RICS_CARRIER_NAMES, RICS_COUNTRIES
-from backend.core.security import require_login, log_event
+from backend.core.security import _safe_filename, require_login, log_event
 from backend.core.pages import serve_page
-from backend.core.state import PARSE_JOBS, start_file_job, file_job_progress
+from backend.core.state import DISCOUNT_STORE, PARSE_JOBS, start_file_job, file_job_progress
+from backend.routers.excel import start_xlsx_job
+from backend.routers.generate import stored_file_response
 from backend.core.osdm_bytes import _append_to_json_array, check_fare_delivery, require_fare_delivery, read_delivery
 
 logger = logging.getLogger(__name__)
@@ -352,7 +354,11 @@ def fare_discount_apply(
     if new_carrier_constraint:
         result_bytes = _append_to_json_array(result_bytes, "carrierConstraints", [new_carrier_constraint])
 
-    log_event(request.session.get("user_email"), "discount_applied", detail={
+    user_email = request.session["user_email"]
+    filename = _safe_filename(f"fareDelivery_{id_base.rstrip('_')}_discount.json")
+    DISCOUNT_STORE[user_email] = {"filename": filename, "content": result_bytes, "created_at": time.time()}
+
+    log_event(user_email, "discount_applied", detail={
         "deliveryId": delivery_id,
         "stationPairs": station_pairs,
         "carrierCodes": list(carrierCodes),
@@ -362,13 +368,25 @@ def fare_discount_apply(
         "priceCount": len(new_prices),
     })
 
-    filename = f"fareDelivery_{id_base.rstrip('_')}_discount.json"
-    return Response(
-        content=result_bytes,
-        media_type="application/json",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Fare-Count": str(len(new_fares)),
-            "X-Price-Count": str(len(new_prices)),
-        },
-    )
+    return {
+        "ok": True,
+        "outputFile": filename,
+        "summary": {"fareCount": len(new_fares), "priceCount": len(new_prices),
+                    "discountName": discountName, "discountPct": discountPct},
+    }
+
+
+@router.get("/fare-discount/download/{filename}")
+def fare_discount_download(filename: str, request: Request):
+    require_login(request)
+    return stored_file_response(DISCOUNT_STORE.get(request.session["user_email"]), filename)
+
+
+@router.post("/fare-discount/excel")
+def fare_discount_excel(request: Request):
+    require_login(request)
+    user_email = request.session["user_email"]
+    entry = DISCOUNT_STORE.get(user_email)
+    if not entry:
+        raise HTTPException(status_code=400, detail="Ingen rabattert OSDM-fil tilgjengelig")
+    return {"jobId": start_xlsx_job(entry["content"], user_email)}

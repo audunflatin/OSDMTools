@@ -174,8 +174,7 @@ async function generateOsdm() {
   generateBtn.disabled = true;
   document.getElementById("downloadBtn").disabled = true;
   document.getElementById("downloadExcelBtn").disabled = true;
-  show("spinnerGenerate");
-  startProgress();
+  const stopProgress = startProgress();
 
   const fd = new FormData();
   ["exchangeRate", "validFrom", "validTo", "datasetId", "environment", "optionalDelivery", "previousDeliveryId"]
@@ -205,7 +204,7 @@ async function generateOsdm() {
   } catch {
     showResult(t("err_osdm_failed"), false);
   } finally {
-    hide("spinnerGenerate");
+    stopProgress();
     generateBtn.disabled = false;
   }
 }
@@ -218,14 +217,16 @@ function downloadAsExcel() {
   exportExcel("/ui/excel-from-generated");
 }
 
-function startProgress(){
-  const bar = progressBar;
-  bar.style.display = "block";
-  const t_ = setInterval(async () => {
-    const p = await (await fetch("/ui/progress")).json();
-    bar.value = p.percent;
-    if(p.status === "done" || p.status === "error"){ clearInterval(t_); bar.style.display = "none"; }
+/** Poll genereringsfremdrift (/ui/progress). Returnerer en funksjon som stopper og skjuler. */
+function startProgress() {
+  showProgress("generateProgress", 0, "processing");
+  const timer = setInterval(async () => {
+    try {
+      const p = await (await fetch("/ui/progress")).json();
+      if (p.status === "running") showProgress("generateProgress", p.percent, "processing");
+    } catch { /* neste runde */ }
   }, 500);
+  return () => { clearInterval(timer); hideProgress("generateProgress"); };
 }
 
 

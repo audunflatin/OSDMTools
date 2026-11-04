@@ -1,64 +1,39 @@
 /* OSDM Editor – frontend logic */
 
 let _summary = null;
-const maxMb = 5000;
 
 // ---------------------------------------------------------------------------
 // File handling
 // ---------------------------------------------------------------------------
 
 function onFileChange() {
-  const input = document.getElementById("editorFile");
-  const btn = document.getElementById("loadBtn");
-  btn.disabled = !input.files || !input.files.length;
+  const file = document.getElementById("editorFile").files[0];
+  document.getElementById("loadMsg").innerHTML = "";
+  document.getElementById("loadBtn").disabled = !file || !showFileInfo(file);
 }
 
 async function loadFile() {
-  const input = document.getElementById("editorFile");
-  if (!input.files || !input.files.length) return;
-  const file = input.files[0];
-
-  if (file.size > maxMb * 1024 * 1024) {
-    showMsg("loadMsg", `Filen er for stor (maks ${maxMb} MB)`, "err");
-    return;
-  }
+  const file = document.getElementById("editorFile").files[0];
+  if (!file) return;
 
   const btn = document.getElementById("loadBtn");
   btn.disabled = true;
-  showProgressBar("loadProgress", "loadProgressFill", "loadProgressPct", 0);
-  document.getElementById("loadProgress").style.display = "block";
   document.getElementById("loadMsg").innerHTML = "";
   document.getElementById("editorBody").style.display = "none";
 
-  // Fake progress while uploading
-  let pct = 0;
-  const ticker = setInterval(() => {
-    pct = Math.min(pct + 3, 90);
-    showProgressBar("loadProgress", "loadProgressFill", "loadProgressPct", pct);
-  }, 200);
+  const fd = new FormData();
+  fd.append("osdmFile", file);
+  const { ok, data } = await uploadAndWait("/osdm-editor/load", fd, "loadProgress", "processing");
+  btn.disabled = false;
 
-  try {
-    const fd = new FormData();
-    fd.append("osdmFile", file);
-    const resp = await fetch("/osdm-editor/load", { method: "POST", body: fd });
-    clearInterval(ticker);
-    showProgressBar("loadProgress", "loadProgressFill", "loadProgressPct", 100);
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-      throw new Error(err.detail || resp.statusText);
-    }
-    _summary = await resp.json();
-    document.getElementById("loadProgress").style.display = "none";
-    renderSummary(_summary);
-    document.getElementById("editorBody").style.display = "block";
-    showTab("overview");
-  } catch (e) {
-    clearInterval(ticker);
-    document.getElementById("loadProgress").style.display = "none";
-    showMsg("loadMsg", e.message, "err");
-  } finally {
-    btn.disabled = false;
+  if (!ok) {
+    document.getElementById("loadMsg").innerHTML = renderError(data.error);
+    return;
   }
+  _summary = data;
+  renderSummary(_summary);
+  document.getElementById("editorBody").style.display = "block";
+  showTab("overview");
 }
 
 // ---------------------------------------------------------------------------
@@ -79,14 +54,7 @@ function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 // ---------------------------------------------------------------------------
 
 function renderSummary(s) {
-  // Stats chips
-  const statsEl = document.getElementById("overviewStats");
-  statsEl.innerHTML = `
-    <div class="stat-chip"><strong>${s.stats.rc_count}</strong> RC</div>
-    <div class="stat-chip"><strong>${s.stats.fare_count}</strong> fares</div>
-    <div class="stat-chip"><strong>${s.stats.price_count}</strong> prices</div>
-    <div class="stat-chip"><strong>${s.passenger_types.length}</strong> passenger types</div>
-  `;
+  renderStats(s);
 
   // Metadata fields
   document.getElementById("metaDeliveryId").value = s.delivery.deliveryId || "";
@@ -105,13 +73,20 @@ function renderSummary(s) {
   renderRcTable(s);
 }
 
+function renderStats(s) {
+  const chip = (n, key) => `<div class="stat-chip"><strong>${n.toLocaleString()}</strong> ${t(key)}</div>`;
+  document.getElementById("overviewStats").innerHTML =
+    chip(s.stats.rc_count, "label_fare_count_short") + chip(s.stats.fare_count, "editor_stat_fares") +
+    chip(s.stats.price_count, "label_price_count_short") + chip(s.passenger_types.length, "editor_stat_passenger_types");
+}
+
 function renderPassengers(s) {
   const el = document.getElementById("pcList");
   if (!s.passenger_types.length) { el.innerHTML = "<p>–</p>"; return; }
   el.innerHTML = s.passenger_types.map(pc => `
     <div class="pc-row" id="pcrow-${pc.id}">
       <div>
-        <div class="pc-name">${escHtml(pc.name || pc.id)}</div>
+        <div class="pc-name">${escapeHtml(pc.name || pc.id)}</div>
         ${pc.is_adult ? `<div class="pc-adult">${t("editor_adult_label")}</div>` : ""}
         ${!pc.is_adult ? `<div style="font-size:0.75rem;color:var(--text-muted);">${t("editor_ratio_label")}</div>` : ""}
       </div>
@@ -136,19 +111,19 @@ function renderRcTable(s) {
   const wrap = document.getElementById("rcTableWrap");
   if (!s.rc_list.length) { wrap.innerHTML = ""; return; }
   const truncNote = s.stats.rc_list_truncated
-    ? `<p class="truncated-note">Viser de første 500 av ${s.stats.rc_count} relasjoner.</p>` : "";
+    ? `<p class="truncated-note">${t("editor_truncated").replace("{shown}", s.rc_list.length).replace("{total}", s.stats.rc_count)}</p>` : "";
   wrap.innerHTML = `
     ${truncNote}
     <table class="rc-table">
       <thead><tr>
-        <th>Fra UIC</th><th>Fra navn</th><th>Til UIC</th><th>Til navn</th><th>Avstand</th>
+        <th>${t("editor_col_from_uic")}</th><th>${t("editor_col_from_name")}</th><th>${t("editor_col_to_uic")}</th><th>${t("editor_col_to_name")}</th><th>${t("editor_col_distance")}</th>
       </tr></thead>
       <tbody>${s.rc_list.map(rc => `
         <tr>
-          <td>${escHtml(rc.from_uic)}</td>
-          <td>${escHtml(rc.from_name || "–")}</td>
-          <td>${escHtml(rc.to_uic)}</td>
-          <td>${escHtml(rc.to_name || "–")}</td>
+          <td>${escapeHtml(rc.from_uic)}</td>
+          <td>${escapeHtml(rc.from_name || "–")}</td>
+          <td>${escapeHtml(rc.to_uic)}</td>
+          <td>${escapeHtml(rc.to_name || "–")}</td>
           <td>${rc.distance} km</td>
         </tr>`).join("")}
       </tbody>
@@ -221,7 +196,7 @@ async function addRelation() {
   const adultPrice   = parseFloat(document.getElementById("relAdultPrice").value);
   const distance     = parseInt(document.getElementById("relDistance").value, 10);
 
-  if (!fromUic || !toUic) { showMsg("relMsg", "UIC-koder mangler", "err"); return; }
+  if (!fromUic || !toUic) { showMsg("relMsg", t("editor_error_uic"), "err"); return; }
   if (isNaN(adultPrice) || adultPrice <= 0) { showMsg("relMsg", t("editor_adult_price") + " > 0", "err"); return; }
   if (isNaN(distance) || distance < 0) { showMsg("relMsg", t("editor_distance") + " >= 0", "err"); return; }
 
@@ -240,13 +215,7 @@ async function addRelation() {
     if (sumResp.ok) {
       _summary = await sumResp.json();
       renderRcTable(_summary);
-      const statsEl = document.getElementById("overviewStats");
-      statsEl.innerHTML = `
-        <div class="stat-chip"><strong>${_summary.stats.rc_count}</strong> RC</div>
-        <div class="stat-chip"><strong>${_summary.stats.fare_count}</strong> fares</div>
-        <div class="stat-chip"><strong>${_summary.stats.price_count}</strong> prices</div>
-        <div class="stat-chip"><strong>${_summary.passenger_types.length}</strong> passenger types</div>
-      `;
+      renderStats(_summary);
     }
 
     // Clear inputs
@@ -266,15 +235,7 @@ async function addRelation() {
 function showMsg(id, text, type) {
   const el = document.getElementById(id);
   if (!el) return;
-  el.className = type === "ok" ? "msg-ok" : "msg-err";
+  // Samme meldingsstil som resten av appen
+  el.className = type === "ok" ? "check-ok" : "validation-error";
   el.textContent = text;
-}
-
-function showProgressBar(wrapperId, fillId, pctId, pct) {
-  document.getElementById(fillId).style.width = pct + "%";
-  document.getElementById(pctId).textContent = pct + "%";
-}
-
-function escHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

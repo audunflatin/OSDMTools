@@ -213,80 +213,13 @@ function onRouteModeChange() {
 }
 
 // ---------------------------------------------------------------------------
-// Progress-hjelpere
-// ---------------------------------------------------------------------------
-
-function showParseProgress(pct, stage) {
-  const el = document.getElementById("parseProgress");
-  if (!el) return;
-  el.style.display = "";
-  el.querySelector(".progress-fill").style.width = pct + "%";
-  el.querySelector(".progress-pct").textContent = pct + "%";
-  const stageEl = el.querySelector(".progress-stage");
-  if (stageEl) stageEl.textContent = (stage ? t("validate_stage_" + stage) : "") || "";
-}
-
-function hideParseProgress() {
-  const el = document.getElementById("parseProgress");
-  if (el) el.style.display = "none";
-}
-
-function uploadWithProgress(url, formData, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const startTime = Date.now();
-    let hasRealProgress = false;
-
-    const timer = setInterval(() => {
-      if (!hasRealProgress) {
-        const elapsed = (Date.now() - startTime) / 1000;
-        onProgress(0.48 * (1 - Math.exp(-elapsed / 60)));
-      }
-    }, 500);
-
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable && e.total > 0) {
-        hasRealProgress = true;
-        onProgress(e.loaded / e.total);
-      }
-    };
-    xhr.onload = () => {
-      clearInterval(timer);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
-      } else { reject(new Error(xhr.statusText || `HTTP ${xhr.status}`)); }
-    };
-    xhr.onerror = () => { clearInterval(timer); reject(new Error("Network error")); };
-    xhr.open("POST", url);
-    xhr.send(formData);
-  });
-}
-
-async function pollParseJob(jobId, base = 0) {
-  while (true) {
-    await new Promise(r => setTimeout(r, 600));
-    try {
-      const r = await fetch(`/fare-discount/parse/progress/${jobId}`);
-      const data = await r.json();
-      if (data.status === "done") return data.result;
-      if (data.status === "error") return null;
-      const pct = base + Math.round((data.percent || 0) / 100 * (100 - base));
-      showParseProgress(pct, data.stage || "validating");
-    } catch {
-      return null;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Fil-opplasting og parsing
 // ---------------------------------------------------------------------------
 
 async function onFileChange() {
   const file     = document.getElementById("discountFile").files[0];
-  const fileInfo = document.getElementById("fileInfo");
   const stepForm = document.getElementById("stepForm");
-  const result   = document.getElementById("discountResult");
+  const summary  = document.getElementById("parseSummary");
 
   osdmStations = [];
   stationPairs = [{ from: null, to: null }];
@@ -295,62 +228,44 @@ async function onFileChange() {
   const routeNone = document.querySelector("input[name=routeMode][value='none']");
   if (routeNone) { routeNone.checked = true; onRouteModeChange(); }
   stepForm.style.display = "none";
-  result.innerText = "";
-  result.className = "";
-  hideParseProgress();
+  summary.innerHTML = "";
+  resetDiscountResult();
 
-  if (!file) { fileInfo.style.display = "none"; return; }
-
-  const sizeMb = (file.size / 1024 / 1024).toFixed(1);
-  const maxMb = 5000;
-
-  if (file.size > maxMb * 1024 * 1024) {
-    fileInfo.innerText = t("file_too_large").replace("{size}", sizeMb).replace("{max}", maxMb);
-    fileInfo.style.display = "block";
-    fileInfo.style.color = "#c00";
-    return;
-  }
-
-  fileInfo.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;opacity:.65;margin-right:5px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>${file.name.replace(/</g,"&lt;").replace(/>/g,"&gt;")} (${sizeMb} MB)`;
-  fileInfo.style.display = "block";
-  fileInfo.style.color = "";
-
-  showParseProgress(0, "uploading");
+  if (!file || !showFileInfo(file)) return;
 
   const fd = new FormData();
   fd.append("osdmFile", file);
-
+  let res;
   try {
+    showProgress("parseProgress", 0, "uploading");
     const { jobId } = await uploadWithProgress("/fare-discount/parse", fd, frac =>
-      showParseProgress(Math.round(frac * 50), "uploading")
+      showProgress("parseProgress", Math.round(frac * 50), "uploading")
     );
-    const res = await pollParseJob(jobId, 50);
-
-    hideParseProgress();
-
-    if (!res) {
-      result.innerText = t("unknown_error");
-      result.className = "status-error";
-      return;
-    }
-
-    osdmStations       = res.stations;
-    osdmPassengers     = res.passengerConstraints;
-    osdmServiceClasses = res.serviceClasses;
-
-    document.getElementById("parsedInfo").innerText =
-      t("discount_parsed_info").replace("{id}", res.deliveryId).replace("{count}", res.stations.length);
-
-    renderPairs();
-    renderPassengerCheckboxes();
-    renderServiceClassCheckboxes();
-    result.innerText = "";
-    stepForm.style.display = "block";
+    res = await pollJob(jobId, "/fare-discount/parse/progress", "parseProgress", 50);
   } catch (err) {
-    hideParseProgress();
-    result.innerText = `${t("err_network")}: ${err.message}`;
-    result.className = "status-error";
+    res = { ok: false, error: err.message };
+  } finally {
+    hideProgress("parseProgress");
   }
+
+  if (!res || res.ok === false) {
+    summary.innerHTML = renderError(res && res.error);
+    return;
+  }
+
+  osdmStations       = res.stations;
+  osdmPassengers     = res.passengerConstraints;
+  osdmServiceClasses = res.serviceClasses;
+
+  summary.innerHTML = `<div class="info-box"><div>
+      <strong>${t("osdm_validated")}</strong>
+      <div class="info-meta">${escapeHtml(t("discount_parsed_info").replace("{id}", res.deliveryId).replace("{count}", res.stations.length))}</div>
+    </div></div>`;
+
+  renderPairs();
+  renderPassengerCheckboxes();
+  renderServiceClassCheckboxes();
+  stepForm.style.display = "block";
 }
 
 // ---------------------------------------------------------------------------
@@ -485,25 +400,25 @@ function renderServiceClassCheckboxes() {
 // Submit
 // ---------------------------------------------------------------------------
 
-async function applyDiscount() {
-  const result = document.getElementById("discountResult");
+let lastDiscountFile = null;
 
+function resetDiscountResult() {
+  hideResult();
+  setValidationError("");
+  lastDiscountFile = null;
+  document.getElementById("downloadBtn").disabled = true;
+  document.getElementById("downloadExcelBtn").disabled = true;
+}
+
+/** Les og valider skjemaet. Returnerer FormData, eller null (med melding) ved feil. */
+function buildDiscountForm() {
   const routeMode = document.querySelector("input[name=routeMode]:checked")?.value ?? "none";
   let pairsPayload = [];
-
   if (routeMode === "specific") {
     const completePairs   = stationPairs.filter(p => p.from && p.to);
     const incompletePairs = stationPairs.filter(p => (p.from && !p.to) || (!p.from && p.to));
-    if (completePairs.length === 0) {
-      result.innerText = t("discount_error_no_pair");
-      result.className = "status-error";
-      return;
-    }
-    if (incompletePairs.length > 0) {
-      result.innerText = t("discount_error_incomplete_pair");
-      result.className = "status-error";
-      return;
-    }
+    if (completePairs.length === 0) return setValidationError(t("discount_error_no_pair")), null;
+    if (incompletePairs.length > 0) return setValidationError(t("discount_error_incomplete_pair")), null;
     pairsPayload = completePairs.map(p => ({
       fromCpId: p.from.cp_id, toCpId: p.to.cp_id,
       fromUic:  p.from.uic,   toUic:  p.to.uic,
@@ -511,85 +426,53 @@ async function applyDiscount() {
   }
 
   const discountName = document.getElementById("discountName").value.trim();
-  if (!discountName) {
-    result.innerText = t("discount_error_no_name");
-    result.className = "status-error";
-    return;
-  }
+  if (!discountName) return setValidationError(t("discount_error_no_name")), null;
 
   const carrierMode = document.querySelector("input[name=carrierMode]:checked").value;
-  if (carrierMode === "specific" && selectedCarriers.length === 0) {
-    result.innerText = t("discount_error_no_carrier");
-    result.className = "status-error";
-    return;
-  }
+  if (carrierMode === "specific" && selectedCarriers.length === 0) return setValidationError(t("discount_error_no_carrier")), null;
 
   const discountPct = parseFloat(document.getElementById("discountPct").value);
-  if (isNaN(discountPct) || discountPct <= 0 || discountPct >= 100) {
-    result.innerText = t("discount_error_bad_pct");
-    result.className = "status-error";
-    return;
-  }
+  if (isNaN(discountPct) || discountPct <= 0 || discountPct >= 100) return setValidationError(t("discount_error_bad_pct")), null;
 
   const passengerRefs   = [...document.querySelectorAll("input[name=passengerRef]:checked")].map(el => el.value);
   const serviceClassIds = [...document.querySelectorAll("input[name=serviceClassId]:checked")].map(el => el.value);
+  if (!passengerRefs.length || !serviceClassIds.length) return setValidationError(t("discount_error_no_passenger")), null;
 
-  if (!passengerRefs.length || !serviceClassIds.length) {
-    result.innerText = t("discount_error_no_passenger");
-    result.className = "status-error";
-    return;
-  }
-
-  result.innerText = t("discount_processing");
-  result.className = "";
-  document.getElementById("applyBtn").disabled = true;
-
-  const file = document.getElementById("discountFile").files[0];
   const fd = new FormData();
-  fd.append("osdmFile", file);
+  fd.append("osdmFile", document.getElementById("discountFile").files[0]);
   fd.append("stationPairsJson", JSON.stringify(pairsPayload));
   fd.append("discountName", discountName);
   fd.append("discountPct",  discountPct);
   selectedCarriers.forEach(c => fd.append("carrierCodes", c.code));
   passengerRefs.forEach(r   => fd.append("passengerRefs", r));
   serviceClassIds.forEach(s => fd.append("serviceClassIds", s));
+  return fd;
+}
 
-  try {
-    const r = await fetch("/fare-discount/apply", { method: "POST", body: fd });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      const detail = err.detail;
-      const msg = Array.isArray(detail)
-        ? detail.map(e => `${(e.loc || []).join(".")} – ${e.msg}`).join("; ")
-        : (detail || t("unknown_error"));
-      result.innerText = msg;
-      result.className = "status-error";
-      return;
-    }
+async function applyDiscount() {
+  resetDiscountResult();
+  const fd = buildDiscountForm();
+  if (!fd) return;
 
-    const fareCount  = r.headers.get("X-Fare-Count")  || "?";
-    const priceCount = r.headers.get("X-Price-Count") || "?";
+  const applyBtn = document.getElementById("applyBtn");
+  applyBtn.disabled = true;
+  const { ok, data } = await uploadAndWait("/fare-discount/apply", fd, "applyProgress", "processing");
+  applyBtn.disabled = false;
 
-    const disposition = r.headers.get("Content-Disposition") || "";
-    const m = disposition.match(/filename="(.+?)"/);
-    const filename = m ? m[1] : "fareDelivery_discount.json";
-
-    const blob = await r.blob();
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    result.innerHTML =
-      t("discount_success").replace("{fares}", fareCount).replace("{prices}", priceCount) + "<br>" +
-      `<span style="color:var(--text-muted); font-size:0.85rem;">${t("discount_success_filename").replace("{filename}", `<em>${filename}</em>`)}</span>`;
-    result.className = "status-ok";
-  } catch (err) {
-    result.innerText = `${t("err_network")}: ${err.message}`;
-    result.className = "status-error";
-  } finally {
-    document.getElementById("applyBtn").disabled = false;
+  if (!ok) {
+    showResult(data.error, false);
+    return;
   }
+  lastDiscountFile = data.outputFile;
+  showResult([
+    t("discount_success").replace("{fares}", data.summary.fareCount),
+    `${t("label_file")}: ${data.outputFile}`,
+    `${t("label_price_count_short")}: ${data.summary.priceCount}`,
+  ].join("\n"), true);
+  document.getElementById("downloadBtn").disabled = false;
+  document.getElementById("downloadExcelBtn").disabled = false;
+}
+
+function downloadDiscounted() {
+  if (lastDiscountFile) window.location.href = `/fare-discount/download/${encodeURIComponent(lastDiscountFile)}`;
 }

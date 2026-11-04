@@ -78,7 +78,6 @@ adjustBtn.addEventListener("click", async () => {
   if (!validateAdjustInputs()) return;
 
   adjustBtn.disabled = true;
-  document.getElementById("spinnerAdjust").style.display = "block";
 
   const fd = new FormData();
   fd.append("osdm_file", osdmFileInput.files[0]);
@@ -90,27 +89,22 @@ adjustBtn.addEventListener("click", async () => {
   fd.append("valid_from", document.getElementById("validFrom").value);
   fd.append("valid_to", document.getElementById("validTo").value);
 
-  try {
-    const r = await fetch("/price-adjust", { method: "POST", body: fd });
-    const res = await r.json().catch(() => ({}));
-    if (!r.ok || !res.ok) throw new Error();
-
-    lastAdjustedFile = res.outputFile;
-    const factor = res.summary.factor.toFixed(4).replace(/\.?0+$/, "");
-    showResult([
-      t("adjust_success"),
-      ...deliverySummaryLines(res),
-      `${t("label_factor")}: ${factor}`,
-      `${t("label_price_count")}: ${res.summary.faresUpdated}`,
-    ].join("\n"), true);
-    document.getElementById("downloadBtn").disabled = false;
-    document.getElementById("downloadExcelBtn").disabled = false;
-  } catch {
-    showResult(t("adjust_error_failed"), false);
-  } finally {
-    adjustBtn.disabled = false;
-    document.getElementById("spinnerAdjust").style.display = "none";
+  const { ok, data: res } = await uploadAndWait("/price-adjust", fd, "adjustProgress", "processing");
+  adjustBtn.disabled = false;
+  if (!ok) {
+    showResult(res.error || t("adjust_error_failed"), false);
+    return;
   }
+  lastAdjustedFile = res.outputFile;
+  const factor = res.summary.factor.toFixed(4).replace(/\.?0+$/, "");
+  showResult([
+    t("adjust_success"),
+    ...deliverySummaryLines(res),
+    `${t("label_factor")}: ${factor}`,
+    `${t("label_price_count")}: ${res.summary.faresUpdated}`,
+  ].join("\n"), true);
+  document.getElementById("downloadBtn").disabled = false;
+  document.getElementById("downloadExcelBtn").disabled = false;
 });
 
 function downloadAdjusted() {

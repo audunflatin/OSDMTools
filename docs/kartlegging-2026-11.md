@@ -138,9 +138,9 @@ Med begge feilene rettet endres **0** farer.
 |---|---|---|
 | U1 | Bare landingssiden har `<meta name="viewport">`, og `styles.css` har ingen `@media`-regler. Appen er ikke laget for mobil eller nettbrett. | Grunnleggende responsivitet (sidebar som meny på smale skjermer). Lav prioritet for et B2B-verktøy. |
 | U2 ✅ | Sidebaren er kopiert inn i 13 HTML-filer. En ny tjeneste krever endringer i alle. | Generer sidebaren fra én kilde (JS eller server) |
-| U3 | Mye inline-`style` (opptil 35 per side) | Flytt til klasser i `styles.css` |
-| U4 | Hardkodet tekst forbi i18n, blant annet tabelloverskriftene og «Viser de første 500 …» i OSDM-editoren, «fares»/«prices» i statistikk-chipsene og «Laster…» i admin-loggen | Inn i `i18n.js` |
-| U5 | Fremdrift og opplasting er implementert separat på hver side | Felles komponent for filopplasting med fremdriftsindikator |
+| U3 (delvis: fare-discount, editor, avstandsfil, prisregulering) | Mye inline-`style` (opptil 35 per side) | Flytt til klasser i `styles.css` |
+| U4 (delvis: editor) | Hardkodet tekst forbi i18n, blant annet tabelloverskriftene og «Viser de første 500 …» i OSDM-editoren, «fares»/«prices» i statistikk-chipsene og «Laster…» i admin-loggen | Inn i `i18n.js` |
+| U5 ✅ | Fremdrift og opplasting er implementert separat på hver side | Felles komponent for filopplasting med fremdriftsindikator |
 | U6 | Genereringsresultatet viser fem eksempler, men ikke hva som *ikke* ble oppdatert (se H3) | Oppsummering med antall oppdaterte og hoppet over |
 
 ---

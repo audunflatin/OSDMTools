@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=28">
+  <link rel="stylesheet" href="/static/styles.css?v=29">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
 </head>
 <body>
@@ -21,41 +21,32 @@
 
   <section class="panel">
     <h2 data-i18n="section_upload">Last opp OSDM-fil</h2>
-    <p style="margin-top:0;" data-i18n="upload_description">
+    <p class="panel-desc" data-i18n="upload_description">
       Last opp en generert OSDM fareDelivery JSON-fil. Filen konverteres til en Excel-fil med alle stasjonsrelasjoner og priser per billettkategori.
     </p>
 
     <label data-i18n="label_osdm_file">OSDM JSON-fil</label>
     <input id="osdmFile" type="file" accept=".json" />
+    <div id="fileInfo" style="display:none;"></div>
 
-    <div id="fileInfo" style="display:none; margin-top:0.75rem; color:#555; font-size:0.9rem;"></div>
-
-    <button id="convertBtn" onclick="convert()" disabled style="margin-top:1.5rem;" data-i18n="btn_convert">
+    <button id="convertBtn" class="btn-primary" onclick="convert()" disabled data-i18n="btn_convert">
       Konverter til Excel
     </button>
+    <div id="convertProgress" class="upload-progress" style="display:none;"></div>
 
-    <div id="spinner" class="spinner"></div>
-    <div id="progressBar" style="display:none; margin-top:0.75rem;">
-      <div style="height:6px; background:var(--spinner-ring); border-radius:3px; overflow:hidden;">
-        <div class="progress-fill" style="height:100%; background:#ff5959; border-radius:3px; transition:width 0.5s ease; width:0%;"></div>
-      </div>
-      <div style="display:flex; gap:0.75rem; align-items:center; margin-top:0.4rem; font-size:0.8rem; color:var(--text-muted);">
-        <span class="spinner-sm"></span>
-        <span id="progressPercent">0%</span>
-      </div>
+    <div id="resultBox" class="status-ok" style="display:none;">
+      <div id="finalStatus" class="result-text"></div>
     </div>
 
-    <div id="resultBox" style="display:none; margin-top:1.5rem;">
-      <div id="resultStatus"></div>
-      <button id="downloadBtn" onclick="download()" style="margin-top:1rem; display:none;" data-i18n="btn_download_excel">
-        Last ned Excel
-      </button>
-    </div>
+    <button id="downloadBtn" onclick="download()" disabled data-i18n="btn_download_excel">
+      Last ned Excel
+    </button>
   </section>
 
 </div>
 
-<script src="/static/i18n.js?v=57"></script>
-<script src="/static/osdmtoExcel.js?v=7"></script>
+<script src="/static/i18n.js?v=58"></script>
+<script src="/static/common.js?v=3"></script>
+<script src="/static/osdmtoExcel.js?v=8"></script>
 </body>
 </html>

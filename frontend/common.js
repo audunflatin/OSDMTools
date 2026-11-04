@@ -3,7 +3,14 @@
 
 const MAX_UPLOAD_MB = 5000;
 
-// ── Fremdrift (.progress-fill / .progress-pct / .progress-stage) ──────────────
+// ── Fremdrift ─────────────────────────────────────────────────────────────────
+// I HTML: <div id="xProgress" class="upload-progress" style="display:none;"></div>
+// Innholdet (stolpe, prosent, steg) fylles inn her, så markupen finnes ett sted.
+
+document.querySelectorAll(".upload-progress").forEach(el => {
+  el.innerHTML = `<div class="progress-track"><div class="progress-fill"></div></div>
+    <div class="progress-info"><span class="spinner-sm"></span><span class="progress-pct">0%</span><span class="progress-stage"></span></div>`;
+});
 
 function showProgress(containerId, pct, stage) {
   const el = document.getElementById(containerId);
@@ -51,14 +58,59 @@ function uploadWithProgress(url, formData, onProgress) {
     };
     xhr.onload = () => {
       clearInterval(timer);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
-      } else { reject(new Error(xhr.statusText || `HTTP ${xhr.status}`)); }
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* ikke-JSON svar */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(errorDetail(data)));
     };
     xhr.onerror = () => { clearInterval(timer); reject(new Error("Network error")); };
     xhr.open("POST", url);
     xhr.send(formData);
   });
+}
+
+/**
+ * Last opp skjema og vent på svar fra et synkront endepunkt, med fremdrift:
+ * opplasting 0–50 %, deretter «stage» (f.eks. "processing") som kryper mot 95 %.
+ * Returnerer {ok, data} – data er JSON-svaret, eller {error} ved feil.
+ */
+function uploadAndWait(url, formData, progressId, stage = "processing") {
+  showProgress(progressId, 0, "uploading");
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    let pct = 0, waiting = false;
+    const timer = setInterval(() => {
+      if (waiting) pct = Math.min(95, pct + (95 - pct) * 0.04);
+      else pct = Math.min(48, pct + 0.5);  // uten reell opplastingsfremdrift
+      showProgress(progressId, Math.round(pct), waiting ? stage : "uploading");
+    }, 400);
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && e.total > 0) pct = Math.max(pct, e.loaded / e.total * 50);
+    };
+    xhr.upload.onload = () => { waiting = true; pct = Math.max(pct, 50); };
+    xhr.onload = () => {
+      clearInterval(timer);
+      hideProgress(progressId);
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* ikke-JSON svar */ }
+      const ok = xhr.status >= 200 && xhr.status < 300;
+      resolve({ ok, data: ok ? data : { error: errorDetail(data) } });
+    };
+    xhr.onerror = () => {
+      clearInterval(timer);
+      hideProgress(progressId);
+      resolve({ ok: false, data: { error: t("err_network") } });
+    };
+    xhr.open("POST", url);
+    xhr.send(formData);
+  });
+}
+
+/** Feilmelding fra FastAPI-svar ({detail: "…"} eller valideringsliste). */
+function errorDetail(data) {
+  const d = data && data.detail;
+  if (Array.isArray(d)) return d.map(e => `${(e.loc || []).join(".")} – ${e.msg}`).join("; ");
+  return d || (data && data.error) || t("unknown_error");
 }
 
 async function pollJob(jobId, progressEndpoint, containerId, base = 0) {
@@ -105,6 +157,18 @@ async function validateOsdmUpload(file, progressId) {
 function escapeHtml(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/** Linje med filnavn og størrelse under filvelgeren (#fileInfo). Returnerer false hvis filen er for stor. */
+function showFileInfo(file, id = "fileInfo") {
+  const el = document.getElementById(id);
+  if (!el) return true;
+  if (!file) { el.style.display = "none"; return true; }
+  const sizeError = fileSizeError(file);
+  el.className = sizeError ? "validation-error" : "file-info";
+  el.innerText = sizeError || `${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+  el.style.display = "block";
+  return !sizeError;
 }
 
 /** Grønn infoboks etter vellykket validering av OSDM-fil. */

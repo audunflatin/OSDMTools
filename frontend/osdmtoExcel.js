@@ -1,172 +1,53 @@
-let csvBlob = null;
-let csvFilename = "osdm_priser.csv";
+// osdmtoExcel.js – OSDM → Excel. Bruker hjelperne i common.js.
 
-const fileInput   = document.getElementById("osdmFile");
-const convertBtn  = document.getElementById("convertBtn");
-const spinner     = document.getElementById("spinner");
-const resultBox   = document.getElementById("resultBox");
-const resultStatus = document.getElementById("resultStatus");
+const fileInput = document.getElementById("osdmFile");
+const convertBtn = document.getElementById("convertBtn");
 const downloadBtn = document.getElementById("downloadBtn");
-const fileInfo    = document.getElementById("fileInfo");
-
-fileInput.addEventListener("change", () => {
-  csvBlob = null;
-  downloadBtn.style.display = "none";
-  resultBox.style.display = "none";
-  resultStatus.innerHTML = "";
-  currentJobId = null;
-
-  if (!fileInput.files.length) {
-    convertBtn.disabled = true;
-    fileInfo.style.display = "none";
-    return;
-  }
-
-  const file = fileInput.files[0];
-  const sizeMb = (file.size / 1024 / 1024).toFixed(1);
-  const isLocal = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
-  const maxMb = isLocal ? 5000 : 100;
-
-  if (file.size > maxMb * 1024 * 1024) {
-    fileInfo.innerText = t("file_too_large").replace("{size}", sizeMb).replace("{max}", maxMb);
-    fileInfo.style.display = "block";
-    fileInfo.style.color = "#c00";
-    convertBtn.disabled = true;
-    return;
-  }
-
-  fileInfo.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;opacity:.65;margin-right:5px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>${file.name.replace(/</g,"&lt;").replace(/>/g,"&gt;")} (${sizeMb} MB)`;
-  fileInfo.style.display = "block";
-  fileInfo.style.color = "";
-  convertBtn.disabled = false;
-});
-
 let currentJobId = null;
 
-function uploadWithProgress(url, formData, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const startTime = Date.now();
-    let hasRealProgress = false;
-
-    const timer = setInterval(() => {
-      if (!hasRealProgress) {
-        const elapsed = (Date.now() - startTime) / 1000;
-        onProgress(0.48 * (1 - Math.exp(-elapsed / 60)));
-      }
-    }, 500);
-
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable && e.total > 0) {
-        hasRealProgress = true;
-        onProgress(e.loaded / e.total);
-      }
-    };
-    xhr.onload = () => {
-      clearInterval(timer);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
-      } else { reject(new Error(xhr.statusText || `HTTP ${xhr.status}`)); }
-    };
-    xhr.onerror = () => { clearInterval(timer); reject(new Error("Network error")); };
-    xhr.open("POST", url);
-    xhr.send(formData);
-  });
+function reset() {
+  currentJobId = null;
+  hideResult();
+  downloadBtn.disabled = true;
 }
 
+fileInput.addEventListener("change", () => {
+  reset();
+  const file = fileInput.files[0];
+  convertBtn.disabled = !file || !showFileInfo(file);
+});
+
 async function convert() {
-  csvBlob = null;
-  downloadBtn.style.display = "none";
-  resultBox.style.display = "none";
-  resultStatus.innerHTML = "";
-  currentJobId = null;
-
-  spinner.style.display = "block";
+  reset();
   convertBtn.disabled = true;
-  updateExcelProgress(0);
-
   const fd = new FormData();
   fd.append("osdmFile", fileInput.files[0]);
 
   try {
+    showProgress("convertProgress", 0, "uploading");
     const { jobId } = await uploadWithProgress("/frontend/osdm-to-csv", fd, frac =>
-      updateExcelProgress(Math.round(frac * 50))
+      showProgress("convertProgress", Math.round(frac * 50), "uploading")
     );
-    currentJobId = jobId;
-    pollStatus(jobId);
-
-  } catch (err) {
-    spinner.style.display = "none";
-    hideExcelProgress();
-    resultBox.style.display = "block";
-    resultStatus.className = "status-error";
-    resultStatus.innerHTML =
-      `<pre style="margin:0; background:transparent; border:none; padding:0.5rem 0;">` +
-      `${t("err_network")}: ${err.message}</pre>`;
-    convertBtn.disabled = false;
-  }
-}
-
-function updateExcelProgress(pct) {
-  const bar = document.getElementById("progressBar");
-  const pctEl = document.getElementById("progressPercent");
-  if (bar) {
-    bar.style.display = "block";
-    const fill = bar.querySelector(".progress-fill");
-    if (fill) fill.style.width = pct + "%";
-  }
-  if (pctEl) pctEl.textContent = pct + "%";
-}
-
-function hideExcelProgress() {
-  const bar = document.getElementById("progressBar");
-  if (bar) bar.style.display = "none";
-}
-
-function pollStatus(jobId) {
-  const interval = setInterval(async () => {
-    try {
-      const r = await fetch(`/frontend/osdm-to-csv-status/${jobId}`);
-      const res = await r.json();
-
-      updateExcelProgress(50 + Math.round((res.percent || 0) / 100 * 50));
-
+    while (true) {
+      await new Promise(r => setTimeout(r, 500));
+      const res = await (await fetch(`/frontend/osdm-to-csv-status/${jobId}`)).json();
       if (res.status === "done") {
-        clearInterval(interval);
-        spinner.style.display = "none";
-        hideExcelProgress();
-        resultBox.style.display = "block";
-        resultStatus.className = "status-ok";
-        resultStatus.innerHTML =
-          `<pre style="margin:0; background:transparent; border:none; padding:0.5rem 0.75rem;">` +
-          `<span data-i18n="convert_success">${t("convert_success")}</span>\n` +
-          `<span data-i18n="label_file">${t("label_file")}</span>: ${res.filename}\n` +
-          `<span data-i18n="label_rows">${t("label_rows")}</span>: ${res.rows}</pre>`;
-        downloadBtn.style.display = "block";
-        convertBtn.disabled = false;
-
-      } else if (res.status === "error") {
-        clearInterval(interval);
-        spinner.style.display = "none";
-        hideExcelProgress();
-        resultBox.style.display = "block";
-        resultStatus.className = "status-error";
-        resultStatus.innerHTML =
-          `<pre style="margin:0; background:transparent; border:none; padding:0.5rem 0;">` +
-          `${t("err_convert_failed")}: ${res.error || t("unknown_error")}</pre>`;
-        convertBtn.disabled = false;
+        currentJobId = jobId;
+        showResult([t("convert_success"), `${t("label_file")}: ${res.filename}`, `${t("label_rows")}: ${res.rows}`].join("\n"), true);
+        downloadBtn.disabled = false;
+        break;
       }
-
-    } catch (err) {
-      clearInterval(interval);
-      spinner.style.display = "none";
-      hideExcelProgress();
-      convertBtn.disabled = false;
+      if (res.status === "error") throw new Error(res.error);
+      showProgress("convertProgress", 50 + Math.round((res.percent || 0) / 2), "converting");
     }
-  }, 300);
+  } catch (err) {
+    showResult(`${t("err_convert_failed")}: ${err.message || t("unknown_error")}`, false);
+  } finally {
+    hideProgress("convertProgress");
+    convertBtn.disabled = !fileInput.files[0];
+  }
 }
 
 function download() {
-  if (!currentJobId) return;
-  window.location.href = `/frontend/osdm-to-csv-download/${currentJobId}`;
+  if (currentJobId) window.location.href = `/frontend/osdm-to-csv-download/${currentJobId}`;
 }

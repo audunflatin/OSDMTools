@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=28">
+  <link rel="stylesheet" href="/static/styles.css?v=29">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
 </head>
 <body>
@@ -21,34 +21,32 @@
 
   <section class="panel">
     <h2 data-i18n="heading_fix_osdm">Rydd opp i OSDM</h2>
-    <p style="margin-top:0;" data-i18n="fix_osdm_desc">
+    <p class="panel-desc" data-i18n="fix_osdm_desc">
       Last opp en OSDM fareDelivery JSON-fil for automatisk opprydding.
     </p>
 
     <label data-i18n="label_osdm_file">OSDM JSON-fil</label>
     <input id="fixOsdmFile" type="file" accept=".json" />
+    <div id="fileInfo" style="display:none;"></div>
 
-    <button id="fixBtn" onclick="doAnalyze()" disabled style="margin-top:1.5rem;" data-i18n="btn_fix_osdm">
+    <button id="fixBtn" class="btn-primary" onclick="doAnalyze()" disabled data-i18n="btn_fix_osdm">
       Analyser fil
     </button>
+    <div id="fixProgress" class="upload-progress" style="display:none;"></div>
 
-    <div id="fixProgress" style="display:none; margin-top:0.75rem;">
-      <div style="height:6px; background:var(--spinner-ring); border-radius:3px; overflow:hidden;">
-        <div id="fixProgressFill" class="progress-fill" style="height:100%; background:#ff5959; border-radius:3px; transition:width 0.4s ease; width:0%;"></div>
-      </div>
-      <div style="display:flex; gap:0.75rem; align-items:center; margin-top:0.4rem; font-size:0.8rem; color:var(--text-muted);">
-        <span class="spinner-sm"></span>
-        <span id="fixProgressPct" class="progress-pct">0%</span>
-        <span id="fixProgressStage" class="progress-stage"></span>
-      </div>
+    <div id="resultBox" class="status-ok" style="display:none;">
+      <div id="finalStatus" class="result-text"></div>
     </div>
 
-    <div id="fixResult" style="margin-top:1.5rem;"></div>
+    <button id="downloadBtn" onclick="doDownload()" disabled data-i18n="btn_apply_fix">
+      Last ned fikset fil
+    </button>
   </section>
 
 </div>
 
-<script src="/static/i18n.js?v=57"></script>
-<script src="/static/fixOsdm.js?v=3"></script>
+<script src="/static/i18n.js?v=58"></script>
+<script src="/static/common.js?v=3"></script>
+<script src="/static/fixOsdm.js?v=4"></script>
 </body>
 </html>

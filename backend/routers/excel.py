@@ -429,8 +429,7 @@ def osdm_to_csv_download(job_id: str, request: Request):
     if not job or job["status"] != "done":
         raise HTTPException(status_code=404, detail="Fil ikke klar")
     xlsx_bytes = job["result"]
-    filename = _safe_filename(job["filename"] or "osdm.xlsx")
-    del XLSX_JOBS[job_id]
+    filename = _safe_filename(job["filename"] or "osdm.xlsx")  # jobben ryddes etter 2 t, så filen kan lastes ned flere ganger
     return StreamingResponse(
         io.BytesIO(xlsx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
