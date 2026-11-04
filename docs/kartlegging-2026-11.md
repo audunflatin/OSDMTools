@@ -2,7 +2,7 @@
 
 Gjennomgang av backend, prislogikk, sikkerhet og frontend, gjort 4. november 2026.
 
-**Status:** K1, K2, K3 og S1 (tester) er rettet 4. november 2026. Resten er åpent.
+**Status:** K1, K2, K3, H4, H5 og S1 (tester) er rettet 4. november 2026. Resten er åpent.
 
 Hvert funn har en ID (K = kritisk, H = høy, M = middels, S = struktur, U = UX/GUI) slik at vi kan vise til dem når vi tar dem.
 
@@ -82,7 +82,7 @@ Med begge feilene rettet endres **0** farer.
 
 **Forslag:** Tell og vis antall relasjoner som ikke fikk ny pris i genereringsresultatet. Vurder å stoppe genereringen helt.
 
-### H4. HTML-injeksjon i e-poster, og kontaktskjemaet er helt åpent
+### H4. ✅ HTML-injeksjon i e-poster, og kontaktskjemaet er helt åpent
 
 **Hvor:** `email_utils.send_contact_email` og `send_access_request_email`, og `POST /contact`
 
@@ -90,7 +90,7 @@ Med begge feilene rettet endres **0** farer.
 
 **Forslag:** Bruk `html.escape()` på alle brukerverdier. Krev innlogging og rate limit på `/contact`.
 
-### H5. Deaktiverte og slettede brukere forblir innlogget
+### H5. ✅ Deaktiverte og slettede brukere forblir innlogget
 
 **Hvor:** `require_login`
 

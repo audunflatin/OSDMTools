@@ -320,13 +320,16 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 ## Sikkerhet – viktige mekanismer
 
 - **SESSION_SECRET**: logger advarsel ved oppstart hvis standardverdi brukes (ikke satt i env).
+- **Sesjonen sjekkes mot DB ved hver forespørsel** (`validate_session_user`-middleware i `main.py`): slettet/deaktivert bruker logges ut umiddelbart, `is_admin` i sesjonen oppdateres, og `must_change_password` sperrer alt unntatt `_PASSWORD_CHANGE_ALLOWED` (GET → redirect til `/change-password`, ellers 403). Middlewaren må registreres **før** `SessionMiddleware` i koden (Starlette legger sist registrerte ytterst).
+- **Session-cookie**: `max_age` 7 dager (`SESSION_MAX_AGE`), `Secure`-flagg på Railway (`SESSION_HTTPS_ONLY`, auto via `RAILWAY_ENVIRONMENT_NAME`), av lokalt.
+- **E-post**: all brukerinput escapes med `_esc()` i `email_utils.py`, og emnefelt renses med `_subject_safe()`. Nye e-postmaler må gjøre det samme.
 - **Ingen inline `onclick` med data fra brukere** — admin.js bruker `data-action`/`data-email` + én delegert click-listener. `escapeHtml` i en `onclick`-streng beskytter ikke (HTML-entiteter dekodes før JS kjøres). E-post valideres på serveren med `_valid_email()` i `/request-access` og `/admin/add-user`.
 - **CORS**: `ALLOWED_ORIGINS` begrenser til `APP_URL` + localhost (settes i `backend/core/settings.py`).
 - **Job-eierskap**: alle job-dicts (`XLSX_JOBS`, `VALIDATION_JOBS`, `PARSE_JOBS`) lagrer `user_email`. Progress- og download-endepunkter returnerer 403 hvis feil bruker spør.
 - **Job-cleanup**: bakgrunnstråd sletter jobber eldre enn 2 timer hvert 10. minutt.
 - **`_safe_filename()`**: fjerner tegn som kan ødelegge `Content-Disposition`-headere. Brukes i `fix_osdm`, `price_adjust` og `osdm-to-csv-download`.
 - **`OSDM_STORE`**: per-bruker dict — to brukere kan generere OSDM samtidig uten å overskrive hverandres resultat.
-- **Rate limiting**: 10 innloggingsforsøk per IP per 60 sek; 3 tilgangsforespørsler per IP per 24 t.
+- **Rate limiting**: 10 innloggingsforsøk per IP per 60 sek; 3 tilgangsforespørsler per IP per 24 t; 5 kontaktmeldinger per bruker per time (`/contact` krever innlogging).
 - **SameSite=strict** på session-cookie; `CF-Connecting-IP` for korrekt IP bak Cloudflare.
 
 ---

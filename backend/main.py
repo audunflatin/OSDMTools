@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Scope
@@ -21,7 +22,7 @@ import ijson
 
 from backend.auth_db import SessionLocal, User, LoginLog, PasswordResetToken, EventLog, AccessRequest, init_db
 from backend.auth_utils import verify_password, generate_password, hash_password
-from backend.core.settings import SESSION_SECRET, ALLOWED_ORIGINS
+from backend.core.settings import SESSION_SECRET, ALLOWED_ORIGINS, SESSION_HTTPS_ONLY, SESSION_MAX_AGE
 from backend.email_utils import send_welcome_email, send_reset_link_email, send_contact_email, send_access_request_email
 import backend.osdm_editor as osdm_editor
 
@@ -51,7 +52,51 @@ class _NoHTMLStaticFiles(StaticFiles):
 
 app.mount("/static", _NoHTMLStaticFiles(directory="frontend"), name="static")
 
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="strict")
+# Stier som er tilgjengelige mens brukeren må bytte passord.
+_PASSWORD_CHANGE_ALLOWED = ("/change-password", "/logout", "/login", "/static/", "/health", "/personvern")
+
+
+@app.middleware("http")
+async def validate_session_user(request: Request, call_next):
+    """Sjekk sesjonens bruker mot databasen ved hver forespørsel.
+
+    Cookien alene er ikke nok: en slettet eller deaktivert bruker skal miste
+    tilgangen med en gang, og tvunget passordbytte skal ikke kunne hoppes over.
+    Registreres før SessionMiddleware, slik at den kjører innenfor den.
+    """
+    email = request.session.get("user_email") if not request.url.path.startswith("/static/") else None
+    if email:
+        user = await run_in_threadpool(_load_session_user, email)
+        if user is None or not user["is_active"]:
+            request.session.clear()
+        else:
+            request.session["is_admin"] = user["is_admin"]
+            if user["must_change_password"] and not request.url.path.startswith(_PASSWORD_CHANGE_ALLOWED):
+                if request.method in ("GET", "HEAD"):
+                    return RedirectResponse("/change-password", status_code=302)
+                return JSONResponse({"detail": "must_change_password"}, status_code=403)
+    return await call_next(request)
+
+
+def _load_session_user(email: str) -> dict | None:
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return None
+        return {
+            "is_active": bool(user.is_active),
+            "is_admin": bool(user.is_admin),
+            "must_change_password": bool(user.must_change_password),
+        }
+
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    same_site="strict",
+    https_only=SESSION_HTTPS_ONLY,
+    max_age=SESSION_MAX_AGE,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -2021,12 +2066,28 @@ def delete_account(request: Request):
     request.session.clear()
     return {"ok": True}
 
+_contact_sent: dict[str, list[float]] = defaultdict(list)
+_CONTACT_WINDOW = 3600  # 1 time
+_CONTACT_MAX    = 5     # maks meldinger per time per bruker
+
+
 @app.post("/contact")
 def contact(
+    request: Request,
     name: str = Form(...),
     email: str = Form(...),
     message: str = Form(...),
 ):
+    require_login(request)
+    user_email = request.session["user_email"]
+    now = time.time()
+    _contact_sent[user_email] = [t for t in _contact_sent[user_email] if now - t < _CONTACT_WINDOW]
+    if len(_contact_sent[user_email]) >= _CONTACT_MAX:
+        raise HTTPException(status_code=429, detail="rate_limited")
+    name, email, message = name.strip()[:200], email.strip()[:254], message.strip()[:5000]
+    if not message:
+        raise HTTPException(status_code=400, detail="Meldingen er tom")
+    _contact_sent[user_email].append(now)
     try:
         send_contact_email(name, email, message)
         log_event(email, "contact_sent", detail={"name": name})
@@ -2052,10 +2113,10 @@ def request_access(
     email_clean      = email.strip().lower()
     if not _valid_email(email_clean):
         raise HTTPException(status_code=400, detail="invalid_email")
-    first_name_clean = first_name.strip()
-    last_name_clean  = last_name.strip()
+    first_name_clean = first_name.strip()[:100]
+    last_name_clean  = last_name.strip()[:100]
     name_clean       = f"{first_name_clean} {last_name_clean}".strip()
-    org_clean        = org.strip()
+    org_clean        = org.strip()[:200]
     with SessionLocal() as db:
         existing_user = db.query(User).filter(User.email == email_clean).first()
         if existing_user:

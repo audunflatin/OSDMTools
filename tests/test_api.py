@@ -89,3 +89,86 @@ def test_generate_osdm_end_to_end():
     assert all(f["id"].startswith("1076_8.0_") for f in out["fareDelivery"]["fareStructure"]["prices"])
     # Legacy-feltene SilverRail trenger skal være med (se CLAUDE.md)
     assert all("legacyAccountingIdentifier" in f for f in out["fareDelivery"]["fareStructure"]["fares"])
+
+
+def _set_user(email, **fields):
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).first()
+        if user is None:
+            user = User(email=email, password_hash=hash_password(PASSWORD),
+                        is_active=True, must_change_password=False)
+            db.add(user)
+        for k, v in fields.items():
+            setattr(user, k, v)
+        db.commit()
+
+
+def test_deactivated_user_loses_access_immediately():
+    """H5: en aktiv sesjon skal slutte å virke når brukeren deaktiveres."""
+    _set_user("c@test.no", is_active=True)
+    client = _login("c@test.no")
+    assert client.get("/account").status_code == 200
+    _set_user("c@test.no", is_active=False)
+    assert client.get("/account").status_code == 401
+    assert client.get("/price-adjust", follow_redirects=False).headers["location"].startswith("/login")
+    _set_user("c@test.no", is_active=True)
+
+
+def test_deleted_user_loses_access_immediately():
+    _set_user("d@test.no")
+    client = _login("d@test.no")
+    assert client.get("/account").status_code == 200
+    with SessionLocal() as db:
+        db.query(User).filter(User.email == "d@test.no").delete()
+        db.commit()
+    assert client.get("/account").status_code == 401
+
+
+def test_forced_password_change_cannot_be_skipped():
+    """H5: brukeren må bytte passord før noe annet virker."""
+    _set_user("e@test.no", must_change_password=True)
+    client = TestClient(main.app)
+    r = client.post("/login", data={"email": "e@test.no", "password": PASSWORD}, follow_redirects=False)
+    assert r.headers["location"] == "/change-password"
+
+    assert client.get("/", follow_redirects=False).headers["location"] == "/change-password"
+    assert client.get("/account", follow_redirects=False).headers["location"] == "/change-password"
+    assert client.post("/ui/validate-ten", files={"tenFile": ("a.csv", TEN_A)}).status_code == 403
+
+    r = client.post("/change-password", data={"password": "nyttpassord1", "confirm": "nyttpassord1"})
+    assert r.status_code == 200
+    assert client.get("/account").status_code == 200
+
+
+def test_contact_requires_login():
+    """H4: kontaktskjemaet skal ikke kunne brukes til spam uten innlogging."""
+    r = TestClient(main.app).post("/contact", data={"name": "x", "email": "x@x.no", "message": "hei"})
+    assert r.status_code == 401
+
+
+def test_contact_is_rate_limited(monkeypatch):
+    sent = []
+    monkeypatch.setattr(main, "send_contact_email", lambda *a: sent.append(a))
+    main._contact_sent.clear()
+    client = _login("a@test.no")
+    data = {"name": "A", "email": "a@test.no", "message": "hei"}
+    for _ in range(main._CONTACT_MAX):
+        assert client.post("/contact", data=data).json()["ok"]
+    assert client.post("/contact", data=data).status_code == 429
+    assert len(sent) == main._CONTACT_MAX
+
+
+def test_emails_escape_user_input(monkeypatch):
+    """H4: brukerinput skal ikke kunne legge inn HTML/lenker i e-postene."""
+    from backend import email_utils
+    captured = {}
+    monkeypatch.setattr(email_utils, "_send", lambda to, subject, html: captured.update(subject=subject, html=html))
+
+    email_utils.send_access_request_email('<a href="https://evil">Klikk</a>', "x@x.no", "<b>Org</b>")
+    assert "<a href=\"https://evil\">" not in captured["html"]
+    assert "&lt;a href=&quot;https://evil&quot;&gt;" in captured["html"]
+    assert "<b>Org</b>" not in captured["html"]
+
+    email_utils.send_contact_email("Navn\nBcc: x@y.no", "x@x.no", "<script>alert(1)</script>")
+    assert "\n" not in captured["subject"]
+    assert "<script>" not in captured["html"]

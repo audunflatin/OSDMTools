@@ -1,3 +1,4 @@
+import html
 import logging
 import requests
 from backend.core.settings import RESEND_API_KEY, SENDER_EMAIL, APP_URL, CONTACT_EMAIL
@@ -70,6 +71,16 @@ def _email_html(heading: str, body_rows: str) -> str:
 </html>"""
 
 
+def _esc(value: str) -> str:
+    """Escape brukerinput før den settes inn i HTML-e-post."""
+    return html.escape(value or "", quote=True)
+
+
+def _subject_safe(value: str) -> str:
+    """Fjern linjeskift fra verdier som havner i emnefeltet."""
+    return " ".join((value or "").split())[:100]
+
+
 def _cred_row(label: str, value: str) -> str:
     s = _STYLE
     return f"""
@@ -97,7 +108,7 @@ def _send(to: str | list[str], subject: str, html: str) -> None:
 
 def send_welcome_email(to: str, password: str) -> None:
     s = _STYLE
-    email_link = f'<a href="mailto:{to}" style="color:#ffffff;text-decoration:none;">{to}</a>'
+    email_link = f'<a href="mailto:{_esc(to)}" style="color:#ffffff;text-decoration:none;">{_esc(to)}</a>'
     body = f"""
     <p style="{s['p']}">You have been granted access to OSDMTools.</p>
     {_cred_row("Email", email_link)}
@@ -113,14 +124,14 @@ def send_contact_email(name: str, from_email: str, message: str) -> None:
     s = _STYLE
     body = f"""
     <p style="{s['p']}">New message from the contact form on osdmtools.com.</p>
-    {_cred_row("Name", name)}
-    {_cred_row("Email", from_email)}
+    {_cred_row("Name", _esc(name))}
+    {_cred_row("Email", _esc(from_email))}
     <table cellpadding="0" cellspacing="0" width="100%" style="{s['cred']}">
-      <tr><td><p style="{s['label']}">Message</p><p style="font-size:15px;color:#ffffff;white-space:pre-wrap;">{message}</p></td></tr>
+      <tr><td><p style="{s['label']}">Message</p><p style="font-size:15px;color:#ffffff;white-space:pre-wrap;">{_esc(message)}</p></td></tr>
     </table>"""
     _send(
         to=CONTACT_EMAIL,
-        subject=f"OSDMTools - melding fra {name}",
+        subject=f"OSDMTools - melding fra {_subject_safe(name)}",
         html=_email_html('Ny melding fra <span style="color:#ff5959;">kontaktskjema</span>', body),
     )
 
@@ -141,14 +152,14 @@ def send_access_request_email(name: str, from_email: str, org: str, recipients: 
     s = _STYLE
     body = f"""
     <p style="{s['p']}">New access request from the landing page on osdmtools.com.</p>
-    {_cred_row("Name", name)}
-    {_cred_row("Email", from_email)}
-    {_cred_row("Railway operator", org)}
+    {_cred_row("Name", _esc(name))}
+    {_cred_row("Email", _esc(from_email))}
+    {_cred_row("Railway operator", _esc(org))}
     <table cellpadding="0" cellspacing="0"><tr><td style="{s['btn_td']}">
       <a href="{APP_URL}/admin/users" style="{s['btn']}">Manage users</a>
     </td></tr></table>"""
     _send(
         to=recipients or [CONTACT_EMAIL],
-        subject=f"OSDMTools - tilgangsforespørsel fra {name}",
+        subject=f"OSDMTools - tilgangsforespørsel fra {_subject_safe(name)}",
         html=_email_html('Tilgangsforespørsel fra <span style="color:#ff5959;">OSDMTools</span>', body),
     )
