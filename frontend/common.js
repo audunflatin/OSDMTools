@@ -194,12 +194,3 @@ async function exportExcel(startUrl, btnId = "downloadExcelBtn", spinnerId = "sp
     btn.disabled = false;
   }
 }
-
-// ── Admin-meny ────────────────────────────────────────────────────────────────
-
-if (window.IS_ADMIN) {
-  const adminLink = document.getElementById("adminLink");
-  if (adminLink) adminLink.style.display = "";
-  const adminSubmenu = document.getElementById("adminSubmenu");
-  if (adminSubmenu) adminSubmenu.style.display = "flex";
-}

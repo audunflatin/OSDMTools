@@ -49,7 +49,9 @@ backend/
 
 **Hver gang en ny side/tjeneste legges til, MÅ følgende oppdateres:**
 
-0. **Backend** — lag `backend/routers/<tjeneste>.py` med `router = APIRouter()`, server siden med `serve_page(request, "<side>.html")`, og legg modulen til i `include_router`-løkka nederst i `backend/main.py`. Tunge operasjoner: `def`-endepunkt + `create_job`/`start_file_job` fra `core/state.py`. Legg til tester i `tests/`.
+0. **Sidebar** — legg lenken til i `frontend/partials/sidebar.html` (én fil for alle sider). Sider med `<!-- SIDEBAR -->` og `<!-- APP_HEADER -->` får sidebar og toppfelt satt inn av `serve_page`; aktiv lenke markeres ut fra URL-stien, og `<!-- ADMIN -->`-blokken fjernes for ikke-admins (ingen JS-toggling).
+
+0b. **Backend** — lag `backend/routers/<tjeneste>.py` med `router = APIRouter()`, server siden med `serve_page(request, "<side>.html")`, og legg modulen til i `include_router`-løkka nederst i `backend/main.py`. Tunge operasjoner: `def`-endepunkt + `create_job`/`start_file_job` fra `core/state.py`. Legg til tester i `tests/`.
 
 1. **`landing.html`** — legg til et nytt feature-kort (`.feat-card`) med passende SVG-ikon, `data-i18n`-tittel og -beskrivelse. Legg til de tilhørende i18n-nøklene i alle 5 språk i `i18n.js`.
 
@@ -89,7 +91,7 @@ Nye endepunkter som gjør tung prosessering (JSON-parse av store filer, valideri
 | `/admin/log` | `admin-log.html` | `admin-log.js` | Aktivitetslogg (kun admin) |
 | `/kontakt` | `contact.html` | — | Kontaktskjema |
 | `/min-konto` | `min-konto.html` | — | Min konto (endre navn, passord, slett konto) |
-| `/endre-passord` | `endre-passord.html` | — | Endre passord (301-redirect til /min-konto) |
+| `/endre-passord` | — | — | 301-redirect til /min-konto |
 
 Felles styling: `styles.css`. Flerspråklig: `i18n.js` (lastes før side-spesifikk JS).
 
@@ -333,14 +335,14 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | `osdmEditor.js` | v=2 |
 | `stationLookup.js` | v=1 |
 | `presentation.js` | v=8 |
-| `common.js` | v=1 (index, price-adjust) |
+| `common.js` | v=2 (index, price-adjust) |
 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
 HTML-filer som laster `i18n.js` med v=57:
 `landing.html`, `index.html`, `admin.html`, `admin-log.html`, `fare-discount.html`,
-`contact.html`, `endre-passord.html`, `min-konto.html`, `osdmtoexcel.html`, `price-adjust.html`, `fix-osdm.html`, `osdm-editor.html`, `station-lookup.html`
+`contact.html`, `min-konto.html`, `osdmtoexcel.html`, `price-adjust.html`, `fix-osdm.html`, `osdm-editor.html`, `station-lookup.html`
 
 HTML-filer med eldre i18n.js (v=19, endres ikke nå):
 `login.html`, `change_password.html`, `forgot_password.html`, `reset_password.html`

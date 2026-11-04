@@ -1,0 +1,14 @@
+<!-- Felles toppfelt (tema, sprak, logg ut). Settes inn av serve_page der siden har APP_HEADER-markoren. -->
+<header class="app-header">
+  <span class="lang-selector">
+    <button class="theme-btn" id="themeToggle" onclick="toggleTheme()"><!-- filled by JS --></button>
+    <span style="width:4px;display:inline-block;"></span>
+    <button class="lang-btn" data-lang="no" onclick="setLanguage('no')" title="Norsk">🇳🇴</button>
+    <button class="lang-btn" data-lang="en" onclick="setLanguage('en')" title="English">🇬🇧</button>
+    <button class="lang-btn" data-lang="de" onclick="setLanguage('de')" title="Deutsch">🇩🇪</button>
+    <button class="lang-btn" data-lang="sv" onclick="setLanguage('sv')" title="Svenska">🇸🇪</button>
+    <button class="lang-btn" data-lang="fr" onclick="setLanguage('fr')" title="Français">🇫🇷</button>
+    <span class="lang-sep">|</span>
+    <a href="/logout" class="logout-button" data-i18n="logout">Logg ut</a>
+  </span>
+</header>

@@ -446,3 +446,27 @@ def test_price_adjust_result_can_be_exported_to_excel():
     # En annen bruker har ingen regulert fil
     other = _login("b@test.no")
     assert other.get("/price-adjust/download/1076_7.2_prod.json").status_code == 404
+
+
+@pytest.mark.parametrize("path, active_href", [
+    ("/", "/"), ("/price-adjust", "/price-adjust"), ("/osdmtoexcel", "/osdmtoexcel"),
+    ("/fare-discount", "/fare-discount"), ("/fix-osdm", "/fix-osdm"), ("/osdm-editor", "/osdm-editor"),
+    ("/stasjonssok", "/stasjonssok"), ("/kontakt", "/kontakt"), ("/min-konto", "/min-konto"),
+])
+def test_shared_sidebar_marks_active_page_and_hides_admin(path, active_href):
+    """U2: sidebar og toppfelt settes inn fra frontend/partials; admin-menyen bare for admins."""
+    import re
+    html = _login("a@test.no").get(path).text
+    assert "<!-- SIDEBAR -->" not in html and "<!-- APP_HEADER -->" not in html
+    assert re.findall(r'href="([^"]+)" class="sidebar-link active"', html) == [active_href]
+    assert "/admin/users" not in html
+    assert 'class="logout-button"' in html
+
+
+def test_admin_sees_admin_menu_with_active_sublink():
+    import re
+    _set_user("admin@test.no", is_admin=True)
+    html = _login("admin@test.no").get("/admin/log").text
+    assert re.findall(r'class="sidebar-sublink active"', html) and 'href="/admin/log" class="sidebar-sublink active"' in html
+    assert 'id="sidebarPendingBadge"' in html
+    assert "sidebar-link active" not in html
