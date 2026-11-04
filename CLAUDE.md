@@ -242,6 +242,9 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 | `POST /osdm-editor/metadata` | Oppdaterer delivery-felt + kalenderperiode i store_entry |
 | `POST /osdm-editor/passenger/{pc_id}` | Setter ny ratio for en passasjerkategori, rekalkuderer alle priser for den kategorien |
 | `POST /osdm-editor/relation` | Legger til ny relasjon (RC + fares for alle passasjerkategorier × serviceklasser) |
+| `GET /osdm-editor/relations?q=&offset=&limit=` | Relasjoner med fra/til (navn, UIC, grensekode), avstand, voksenpris og antall farer; søket krever at alle ordene treffer, eksakt ID gir bare den relasjonen |
+| `POST /osdm-editor/relation/{rc_id}` | `{distance, adult_price_eur}` (begge valgfrie) — ny voksenpris via `set_prices_from_adult` |
+| `POST /osdm-editor/relations/delete` | `{ids: [...]}` — sletter relasjoner med farer, og priser/vanlige punkter som slettingen gjør ubrukt |
 | `GET /osdm-editor/passengers` | Kategorier med alle redigerbare felt, ratio, antall farer, bundles, «søsken» + kontroll (`warnings`), typeliste og tekster |
 | `POST /osdm-editor/passenger/{pc_id}/details` | Type, aldersgrenser, vekt, navn (`nameRef`), `isAncillaryItem`, `combinationConstraint`; `also_ids` = søsken som får samme type/alder |
 | `GET /osdm-editor/border-points` | Lister grensepunkter med stasjoner per side, antall relasjoner og advarsler |
@@ -252,6 +255,11 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 | `GET /osdm-editor/stations?q=&missing=` | Stasjonsnavn + stasjoner i punkter/ruter uten navn (maks 200 rader, `missing_count`, `short_max`) |
 | `POST /osdm-editor/station/{uic}` | `{name, shortName}` — oppdaterer eller legger til stasjonsnavn |
 | `GET /osdm-editor/download` | Serialiserer og returnerer endret OSDM-fil |
+
+### Relasjoner (november 2026)
+- `delete_relations` fjerner farene, prisene **bare de slettede farene** brukte og vanlige tilkoblingspunkter som ingen relasjon bruker lenger. Grensepunkter, stasjonsnavn og det som var ubrukt fra før røres ikke. Nekter å slette alle relasjonene (`fare_templates` til `add_relation` kommer fra første relasjon) og relasjoner som andre seksjoner peker på (`rc_in_use`; finnes ikke i 1076/0083).
+- I 1076 er ingen priser brukt av bare én fare, mens 0083 har 2 164 slike – derfor må prisene ryddes ved sletting.
+- `summary.rc_list` (maks 500) brukes fortsatt av grensepunktfanen til å slå opp stasjonsnavn; relasjonsfanen bruker `/osdm-editor/relations` med sideblaing (100 per side).
 
 ### Passasjerkategorier (november 2026)
 1076 har parvise kopier av samme kategori: G__1/G__2 (voksen) og G__3/G__4 (barn) – én for vanlige billetter (bundle S__1) og én for grupper (S__2). «Søsken» = samme `nameRef` og `passengerType`; skjemaet tilbyr å endre type og aldersgrenser på dem samtidig (vekt og kombinasjonsregler gjelder bare den valgte).
@@ -368,8 +376,8 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 
 | Fil | Versjon |
 |---|---|
-| `styles.css` | v=35 |
-| `i18n.js` | v=65 (alle sider, også innloggingssidene) |
+| `styles.css` | v=36 |
+| `i18n.js` | v=66 (alle sider, også innloggingssidene) |
 | `app.js` | v=28 |
 | `admin.js` | v=23 |
 | `admin-log.js` | v=5 |
@@ -377,7 +385,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | `fareDiscount.js` | v=21 |
 | `priceAdjust.js` | v=13 |
 | `fixOsdm.js` | v=4 |
-| `osdmEditor.js` | v=8 |
+| `osdmEditor.js` | v=9 |
 | `stationLookup.js` | v=2 |
 | `presentation.js` | v=8 |
 | `common.js` | v=5 (alle verktøysider) |
@@ -385,7 +393,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-Alle HTML-filer laster `i18n.js` med samme versjon (v=65) — bump alle samtidig.
+Alle HTML-filer laster `i18n.js` med samme versjon (v=66) — bump alle samtidig.
 
 ---
 

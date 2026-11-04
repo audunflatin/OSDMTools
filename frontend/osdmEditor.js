@@ -31,6 +31,11 @@ async function loadFile() {
     return;
   }
   _summary = data;
+  // Ny fil: nullstill valg og skjema fra forrige fil
+  _relSelected = new Set(); _relOffset = 0; _relEditing = null;
+  _editingPcId = null; _editingTextId = null; _editingBorderId = null;
+  ["relEditForm", "pcForm", "txtForm"].forEach(id => { document.getElementById(id).style.display = "none"; });
+  document.getElementById("relSearch").value = "";
   renderSummary(_summary);
   document.getElementById("editorBody").style.display = "block";
   showTab("overview");
@@ -46,6 +51,7 @@ function showTab(name) {
     document.getElementById("tab" + cap(n)).classList.toggle("active", n === name);
   });
   if (name === "border") loadBorderPoints();
+  if (name === "relations") loadRelations();
   if (name === "texts") loadTexts();
   if (name === "stations") loadStations();
 }
@@ -88,28 +94,185 @@ function renderPassengers() {
   loadPassengers();
 }
 
-function renderRcTable(s) {
-  const wrap = document.getElementById("rcTableWrap");
-  if (!s.rc_list.length) { wrap.innerHTML = ""; return; }
-  const truncNote = s.stats.rc_list_truncated
-    ? `<p class="truncated-note">${t("editor_truncated").replace("{shown}", s.rc_list.length).replace("{total}", s.stats.rc_count)}</p>` : "";
+function renderRcTable() {
+  loadRelations();
+}
+
+// ---------------------------------------------------------------------------
+// Relations: search, paging, edit distance/adult price, delete
+// ---------------------------------------------------------------------------
+
+const REL_PAGE_SIZE = 100;
+let _relData = null;
+let _relOffset = 0;
+let _relSelected = new Set();
+let _relEditing = null;   // relasjonen som redigeres
+let _relSearchTimer = null;
+
+function onRelationSearch() {
+  clearTimeout(_relSearchTimer);
+  _relSearchTimer = setTimeout(() => { _relOffset = 0; loadRelations(); }, 250);
+}
+
+function relationPage(dir) {
+  _relOffset = Math.max(0, _relOffset + dir * REL_PAGE_SIZE);
+  loadRelations();
+}
+
+async function loadRelations() {
+  const q = document.getElementById("relSearch").value.trim();
+  try {
+    _relData = await getJson(`/osdm-editor/relations?q=${encodeURIComponent(q)}&offset=${_relOffset}&limit=${REL_PAGE_SIZE}`);
+    if (_relData.total && _relOffset >= _relData.total) {   // f.eks. etter sletting på siste side
+      _relOffset = Math.max(0, Math.floor((_relData.total - 1) / REL_PAGE_SIZE) * REL_PAGE_SIZE);
+      return loadRelations();
+    }
+    renderRelationTable();
+  } catch (e) {
+    document.getElementById("relTableWrap").innerHTML = renderError(e.message);
+  }
+}
+
+function relEndpoint(ep) {
+  const border = ep.border ? ` <span class="subtle">(${escapeHtml(t("editor_rel_border").replace("{code}", ep.border))})</span>` : "";
+  return `${escapeHtml(ep.name || "–")}${border}<br><span class="subtle mono">${escapeHtml(ep.uic)}</span>`;
+}
+
+function fmtEur(v) {
+  return v == null ? "–" : Number(v).toFixed(2);
+}
+
+function relLabel(rc) {
+  return `${rc.from.name || rc.from.uic} → ${rc.to.name || rc.to.uic}`;
+}
+
+function renderRelationTable() {
+  const wrap = document.getElementById("relTableWrap");
+  const rows = _relData.relations;
+  const first = _relData.total ? _relData.offset + 1 : 0;
+  const last = _relData.offset + rows.length;
+  document.getElementById("relPageInfo").textContent = t("editor_rel_showing")
+    .replace("{from}", first.toLocaleString()).replace("{to}", last.toLocaleString())
+    .replace("{total}", _relData.total.toLocaleString());
+  document.getElementById("relPrevBtn").disabled = _relData.offset === 0;
+  document.getElementById("relNextBtn").disabled = last >= _relData.total;
+  updateRelDeleteBtn();
+
+  if (!rows.length) { wrap.innerHTML = `<p class="field-hint">${t("editor_rel_none")}</p>`; return; }
+  const allChecked = rows.every(rc => _relSelected.has(rc.id));
   wrap.innerHTML = `
-    ${truncNote}
-    <table class="rc-table">
+    <table class="data-table">
       <thead><tr>
-        <th>${t("editor_col_from_uic")}</th><th>${t("editor_col_from_name")}</th><th>${t("editor_col_to_uic")}</th><th>${t("editor_col_to_name")}</th><th>${t("editor_col_distance")}</th>
+        <th class="select-cell"><input type="checkbox" data-rel-select-all ${allChecked ? "checked" : ""} title="${escapeHtml(t("editor_rel_select_all"))}"></th>
+        <th>${t("editor_col_from_name")}</th><th>${t("editor_col_to_name")}</th>
+        <th class="right">${t("editor_col_distance")}</th><th class="right">${t("editor_rel_col_adult")}</th>
+        <th class="right">${t("editor_rel_col_fares")}</th><th></th>
       </tr></thead>
-      <tbody>${s.rc_list.map(rc => `
-        <tr>
-          <td>${escapeHtml(rc.from_uic)}</td>
-          <td>${escapeHtml(rc.from_name || "–")}</td>
-          <td>${escapeHtml(rc.to_uic)}</td>
-          <td>${escapeHtml(rc.to_name || "–")}</td>
-          <td>${rc.distance} km</td>
+      <tbody>${rows.map((rc, i) => `
+        <tr class="${_relEditing && _relEditing.id === rc.id ? "row-selected" : ""}">
+          <td class="select-cell"><input type="checkbox" data-rel-select="${i}" ${_relSelected.has(rc.id) ? "checked" : ""}></td>
+          <td>${relEndpoint(rc.from)}</td>
+          <td>${relEndpoint(rc.to)}</td>
+          <td class="right">${rc.distance ?? "–"} km</td>
+          <td class="right">${fmtEur(rc.adult_eur)}</td>
+          <td class="right">${rc.fare_count.toLocaleString()}</td>
+          <td class="right nowrap">
+            <button data-rel-edit="${i}">${t("btn_edit")}</button>
+            <button data-rel-delete="${i}">${t("btn_delete")}</button>
+          </td>
         </tr>`).join("")}
       </tbody>
     </table>`;
 }
+
+function updateRelDeleteBtn() {
+  const btn = document.getElementById("relDeleteBtn");
+  btn.textContent = t("editor_rel_delete_selected").replace("{n}", _relSelected.size);
+  btn.disabled = _relSelected.size === 0;
+}
+
+function editRelation(i) {
+  const rc = _relData.relations[i];
+  if (!rc) return;
+  _relEditing = rc;
+  document.getElementById("relEditHeading").textContent = t("editor_rel_edit_heading").replace("{label}", relLabel(rc));
+  document.getElementById("relEditDistance").value = rc.distance ?? "";
+  document.getElementById("relEditPrice").value = "";
+  document.getElementById("relEditPrice").placeholder = fmtEur(rc.adult_eur);
+  document.getElementById("relEditForm").style.display = "";
+  document.getElementById("relListMsg").innerHTML = "";
+  renderRelationTable();
+  document.getElementById("relEditHeading").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function closeRelationEdit() {
+  _relEditing = null;
+  document.getElementById("relEditForm").style.display = "none";
+  if (_relData) renderRelationTable();
+}
+
+async function saveRelationEdit() {
+  if (!_relEditing) return;
+  const distance = document.getElementById("relEditDistance").value.trim();
+  const price = document.getElementById("relEditPrice").value.trim();
+  try {
+    const data = await postJson(`/osdm-editor/relation/${encodeURIComponent(_relEditing.id)}`,
+      { distance, adult_price_eur: price });
+    const msg = price
+      ? t("editor_rel_saved_price").replace("{before}", fmtEur(data.adult_before))
+          .replace("{after}", fmtEur(data.adult_after)).replace("{n}", data.updated_fares)
+      : t("editor_rel_saved");
+    closeRelationEdit();
+    await loadRelations();
+    showMsg("relListMsg", msg, "ok");
+  } catch (e) {
+    showMsg("relListMsg", e.message, "err");
+  }
+}
+
+async function deleteRelations(ids) {
+  if (!ids.length || !confirm(t("editor_rel_confirm_delete").replace("{n}", ids.length))) return;
+  try {
+    const d = await postJson("/osdm-editor/relations/delete", { ids });
+    ids.forEach(id => _relSelected.delete(id));
+    if (_relEditing && ids.includes(_relEditing.id)) closeRelationEdit();
+    await loadRelations();
+    showMsg("relListMsg", t("editor_rel_deleted").replace("{rcs}", d.deleted_rcs).replace("{fares}", d.deleted_fares)
+      .replace("{prices}", d.deleted_prices).replace("{cps}", d.deleted_cps), "ok");
+    const sum = await getJson("/osdm-editor/summary").catch(() => null);
+    if (sum) { _summary = sum; renderStats(_summary); }
+  } catch (e) {
+    showMsg("relListMsg", e.message, "err");
+  }
+}
+
+function deleteSelectedRelations() {
+  deleteRelations([..._relSelected]);
+}
+
+document.addEventListener("click", e => {
+  const ed = e.target.closest("[data-rel-edit]");
+  if (ed) return editRelation(parseInt(ed.dataset.relEdit, 10));
+  const del = e.target.closest("[data-rel-delete]");
+  if (del) {
+    const rc = _relData.relations[parseInt(del.dataset.relDelete, 10)];
+    if (rc) deleteRelations([rc.id]);
+  }
+});
+
+document.addEventListener("change", e => {
+  const one = e.target.closest("[data-rel-select]");
+  if (one) {
+    const rc = _relData.relations[parseInt(one.dataset.relSelect, 10)];
+    if (rc) one.checked ? _relSelected.add(rc.id) : _relSelected.delete(rc.id);
+    return renderRelationTable();
+  }
+  if (e.target.closest("[data-rel-select-all]")) {
+    const on = e.target.checked;
+    _relData.relations.forEach(rc => on ? _relSelected.add(rc.id) : _relSelected.delete(rc.id));
+    renderRelationTable();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Metadata save
@@ -330,13 +493,12 @@ async function addRelation() {
     const data = await resp.json();
     showMsg("relMsg", `${data.fares_created} ${t("editor_fares_created")}`, "ok");
 
-    // Refresh summary from server to get updated rc_list
-    const sumResp = await fetch("/osdm-editor/summary");
-    if (sumResp.ok) {
-      _summary = await sumResp.json();
-      renderRcTable(_summary);
-      renderStats(_summary);
-    }
+    // Vis den nye relasjonen i lista og oppdater tallene i oversikten
+    document.getElementById("relSearch").value = `${fromUic} ${toUic}`;
+    _relOffset = 0;
+    loadRelations();
+    const sum = await getJson("/osdm-editor/summary").catch(() => null);
+    if (sum) { _summary = sum; renderStats(_summary); }
 
     // Clear inputs
     document.getElementById("relFromUic").value = "";

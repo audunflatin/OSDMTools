@@ -157,6 +157,42 @@ def _entry(request: Request) -> dict:
     return entry
 
 
+@router.get("/osdm-editor/relations")
+def editor_relations(request: Request, q: str = "", offset: int = 0, limit: int = 100):
+    entry = _entry(request)
+    return osdm_editor.list_relations(entry, q[:200], offset, limit)
+
+
+@router.post("/osdm-editor/relation/{rc_id}")
+async def editor_update_relation(request: Request, rc_id: str):
+    entry = _entry(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise AppError(422, "invalid_input")
+    try:
+        result = await run_in_threadpool(
+            osdm_editor.update_relation, entry, rc_id, body.get("distance"), body.get("adult_price_eur"))
+    except osdm_editor.EditorError as e:
+        raise AppError(404 if e.code == "rc_not_found" else 400, e.code, **e.params)
+    log_event(request.session["user_email"], "editor_relation_update", detail=result)
+    return result
+
+
+@router.post("/osdm-editor/relations/delete")
+async def editor_delete_relations(request: Request):
+    entry = _entry(request)
+    body = await request.json()
+    ids = body.get("ids") if isinstance(body, dict) else None
+    if not isinstance(ids, list) or not ids or len(ids) > 100000:
+        raise AppError(422, "invalid_input")
+    try:
+        result = await run_in_threadpool(osdm_editor.delete_relations, entry, ids)
+    except osdm_editor.EditorError as e:
+        raise AppError(404 if e.code == "rc_not_found" else 400, e.code, **e.params)
+    log_event(request.session["user_email"], "editor_relation_delete", detail=result)
+    return result
+
+
 @router.get("/osdm-editor/passengers")
 def editor_passengers(request: Request):
     entry = _entry(request)

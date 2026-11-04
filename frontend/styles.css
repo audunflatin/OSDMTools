@@ -986,10 +986,6 @@ input[readonly] { cursor: default; padding-right: 2rem; opacity: 1; }
 .pc-ratio-input { width: 90px; margin: 0 0.4rem 0 0; display: inline-block; }
 .pc-ratio-input + button { margin-top: 0; }
 
-.rc-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-.rc-table th { text-align: left; padding: 0.4rem 0.5rem; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
-.rc-table td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
-.rc-table tr:last-child td { border-bottom: none; }
 
 .stat-row { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .stat-chip { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.8rem; }
@@ -1001,7 +997,6 @@ input[readonly] { cursor: default; padding-right: 2rem; opacity: 1; }
 .field-group { display: flex; flex-direction: column; gap: 0.25rem; }
 .field-group label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
 
-.truncated-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-style: italic; }
 
 /* =============================================================================
    Tabeller, søk, sideblaing og tellere (admin, logg, stasjonssøk)
@@ -1124,6 +1119,10 @@ textarea { resize: vertical; font-family: inherit; }
 .translation-row { display: grid; grid-template-columns: 7rem 1fr 1fr auto; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }
 .translation-row input { margin: 0; }
 .translation-row button { margin-top: 0; }
+.pager-row { align-items: center; margin-top: 0.25rem; }
+.pager-row .field-hint { margin: 0; }
+.data-table td.select-cell, .data-table th.select-cell { width: 1.5rem; }
+.data-table td.select-cell input, .data-table th.select-cell input { width: auto; margin: 0; }
 .used-by { display: block; font-family: monospace; font-size: 0.8rem; color: var(--text-muted); }
 @media (max-width: 600px) { .translation-row { grid-template-columns: 1fr; } }
 .center-block { text-align: center; padding: 2rem 0; }
@@ -1174,7 +1173,7 @@ input:disabled { opacity: 0.5; }
   .tab-btn { white-space: nowrap; }
 
   /* Brede tabeller ruller sidelengs i stedet for å sprenge siden */
-  .data-table, .rc-table { display: block; overflow-x: auto; }
+  .data-table { display: block; overflow-x: auto; }
   .pair-row { flex-wrap: wrap; }
 
   /* Knapper under hverandre ved behov */

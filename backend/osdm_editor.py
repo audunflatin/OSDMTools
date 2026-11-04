@@ -1366,6 +1366,175 @@ def update_passenger(store_entry: dict, pc_id: str, fields: dict, also_ids: list
     return {"id": pc_id, "updated": [t["id"] for t in targets]}
 
 
+# ---------------------------------------------------------------------------
+# Relasjoner (regionalConstraints): søk, endre avstand/voksenpris, slette
+# ---------------------------------------------------------------------------
+
+_MAX_DISTANCE = 100000
+_MAX_PRICE_EUR = 100000.0
+
+
+def _rc_endpoint(store_entry: dict, cp_id: str, border_codes: dict) -> dict:
+    uic = store_entry["cp_to_uic"].get(cp_id, "")
+    return {
+        "uic": uic,
+        "name": store_entry["station_name_map"].get(uic, "") or uic,
+        "border": border_codes.get(cp_id, ""),
+    }
+
+
+def list_relations(store_entry: dict, query: str = "", offset: int = 0, limit: int = 100) -> dict:
+    """Relasjoner med stasjoner, avstand, voksenpris og antall farer.
+
+    Søket deles i ord; alle ordene må finnes i fra/til (navn eller UIC) eller
+    relasjonens ID. «oslo bergen» finner altså Oslo S → Bergen.
+    """
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    border_codes = {cp["id"]: _border_code(cp) for cp in fs.get("connectionPoints", []) if _is_border_cp(cp)}
+    fare_count: dict[str, int] = {}
+    for f in fs.get("fares", []):
+        rc = f.get("regionalConstraintRef")
+        if rc:
+            fare_count[rc] = fare_count.get(rc, 0) + 1
+    adult = adult_prices_by_rc(store_entry)
+    terms = [t for t in (query or "").casefold().split() if t]
+    all_rcs = fs.get("regionalConstraints", [])
+    # Eksakt ID gir bare den relasjonen («K__1» skal ikke treffe K__10, K__100 …)
+    exact = [rc for rc in all_rcs if len(terms) == 1 and rc.get("id", "").casefold() == terms[0]]
+    if exact:
+        all_rcs, terms = exact, []
+
+    rows = []
+    for rc in all_rcs:
+        frm = _rc_endpoint(store_entry, rc.get("entryConnectionPointId", ""), border_codes)
+        to = _rc_endpoint(store_entry, rc.get("exitConnectionPointId", ""), border_codes)
+        if terms:
+            hay = " ".join([rc["id"], frm["uic"], frm["name"], to["uic"], to["name"]]).casefold()
+            if not all(t in hay for t in terms):
+                continue
+        rows.append({
+            "id": rc["id"],
+            "from": frm,
+            "to": to,
+            "distance": rc.get("distance"),
+            "fare_count": fare_count.get(rc["id"], 0),
+            "adult_eur": adult.get(rc["id"]),
+        })
+    offset = max(0, int(offset))
+    limit = max(1, min(int(limit), 500))
+    return {
+        "relations": rows[offset:offset + limit],
+        "total": len(rows),
+        "offset": offset,
+        "limit": limit,
+        "rc_count": len(fs.get("regionalConstraints", [])),
+    }
+
+
+def update_relation(store_entry: dict, rc_id: str, distance=None, adult_eur=None) -> dict:
+    """Endre avstand og/eller voksenpris for én relasjon.
+
+    Ny voksenpris går via set_prices_from_adult (samme regler som generering:
+    øvrige kategorier = avrundet voksenpris × ratio, FIP proporsjonalt).
+    """
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    rc = next((r for r in fs.get("regionalConstraints", []) if r.get("id") == rc_id), None)
+    if rc is None:
+        raise EditorError("rc_not_found")
+
+    new_distance = None
+    if distance not in (None, ""):
+        try:
+            new_distance = int(str(distance).strip())
+        except ValueError:
+            raise EditorError("rc_distance_invalid")
+        if not 0 <= new_distance <= _MAX_DISTANCE:
+            raise EditorError("rc_distance_invalid")
+    new_price = None
+    if adult_eur not in (None, ""):
+        try:
+            new_price = float(str(adult_eur).replace(",", ".").strip())
+        except ValueError:
+            raise EditorError("rc_price_invalid")
+        if not 0 < new_price <= _MAX_PRICE_EUR:
+            raise EditorError("rc_price_invalid")
+
+    if new_distance is not None:
+        rc["distance"] = new_distance
+    result = {"id": rc_id, "distance": rc.get("distance"), "updated_fares": 0}
+    if new_price is not None:
+        before = adult_prices_by_rc(store_entry).get(rc_id)
+        stats = set_prices_from_adult(store_entry, {rc_id: new_price})
+        result["updated_fares"] = stats["updated_fares"]
+        result["adult_before"] = before
+        result["adult_after"] = adult_prices_by_rc(store_entry).get(rc_id)
+    return result
+
+
+def delete_relations(store_entry: dict, rc_ids: list) -> dict:
+    """Slett relasjoner med farene sine.
+
+    Rydder også det slettingen gjør ubrukt: priser og vanlige tilkoblingspunkter.
+    Grensepunkter, stasjonsnavn og ting som var ubrukt fra før røres ikke.
+    """
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    rcs: list = fs.get("regionalConstraints", [])
+    ids = {str(i) for i in rc_ids or []}
+    if not ids:
+        raise EditorError("invalid_input")
+    known = {r["id"] for r in rcs}
+    unknown = sorted(ids - known)
+    if unknown:
+        raise EditorError("rc_not_found")
+    if ids == known:
+        raise EditorError("rc_delete_all")
+    # Andre seksjoner som peker på relasjonene (finnes ikke i 1076/0083, men
+    # skjemaet utelukker det ikke) – da sletter vi ikke.
+    counts: dict = {}
+    for section, items in fs.items():
+        if section not in ("regionalConstraints", "fares"):
+            _walk_refs(items, ids, section, None, counts)
+    if counts:
+        where = sorted({w for (_, w) in counts})
+        raise EditorError("rc_in_use", where=", ".join(where))
+
+    fares: list = fs.get("fares", [])
+    removed_fares = [f for f in fares if f.get("regionalConstraintRef") in ids]
+    fares[:] = [f for f in fares if f.get("regionalConstraintRef") not in ids]
+
+    removed_rcs = [r for r in rcs if r["id"] in ids]
+    rcs[:] = [r for r in rcs if r["id"] not in ids]
+
+    # Priser som bare de slettede farene brukte
+    candidate_prices = {f.get("priceRef") for f in removed_fares if f.get("priceRef")}
+    still_used = {f.get("priceRef") for f in fares}
+    orphan_prices = candidate_prices - still_used
+    prices: list = fs.get("prices", [])
+    if orphan_prices:
+        prices[:] = [p for p in prices if p["id"] not in orphan_prices]
+
+    # Vanlige tilkoblingspunkter som bare de slettede relasjonene brukte
+    candidate_cps = {r.get(k) for r in removed_rcs for k in ("entryConnectionPointId", "exitConnectionPointId")}
+    used_cps = {r.get(k) for r in rcs for k in ("entryConnectionPointId", "exitConnectionPointId")}
+    cps: list = fs.get("connectionPoints", [])
+    orphan_cps = {
+        cp["id"] for cp in cps
+        if cp["id"] in candidate_cps and cp["id"] not in used_cps and not _is_border_cp(cp)
+    }
+    if orphan_cps:
+        cps[:] = [cp for cp in cps if cp["id"] not in orphan_cps]
+
+    store_entry["price_map"] = _build_price_map(prices)
+    store_entry["fare_templates"] = _get_fare_templates(fares, rcs)
+    _refresh_station_maps(store_entry)
+    return {
+        "deleted_rcs": len(removed_rcs),
+        "deleted_fares": len(removed_fares),
+        "deleted_prices": len(orphan_prices),
+        "deleted_cps": len(orphan_cps),
+    }
+
+
 def set_prices_from_adult(store_entry: dict, rc_adult_prices: dict[str, float]) -> dict:
     """
     Sett priser for alle ikke-rabatterte farer i de angitte RC-ene.
