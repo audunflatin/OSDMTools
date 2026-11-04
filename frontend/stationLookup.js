@@ -56,7 +56,7 @@ async function doSearch() {
 
   statusEl.textContent = t('station_searching');
   statusEl.style.display = 'block';
-  statusEl.style.color = 'var(--text-muted)';
+  statusEl.classList.remove('is-error');
   tableEl.style.display = 'none';
   btn.disabled = true;
 
@@ -69,7 +69,7 @@ async function doSearch() {
     renderResults(data.results.bindings, bodyEl, tableEl, statusEl);
   } catch {
     statusEl.textContent = t('station_error');
-    statusEl.style.color = 'var(--coral)';
+    statusEl.classList.add('is-error');
   } finally {
     btn.disabled = false;
   }
@@ -78,7 +78,7 @@ async function doSearch() {
 function renderResults(rows, bodyEl, tableEl, statusEl) {
   if (!rows.length) {
     statusEl.textContent = t('station_no_results');
-    statusEl.style.color = 'var(--text-muted)';
+    statusEl.classList.remove('is-error');
     return;
   }
 
@@ -89,13 +89,12 @@ function renderResults(rows, bodyEl, tableEl, statusEl) {
     const country = r.countryLabel ? escapeHtml(r.countryLabel.value) : '–';
     const uic     = r.uic          ? escapeHtml(r.uic.value)          : '–';
     const wdId    = r.station      ? r.station.value.split('/').pop()  : '';
-    const rowBg   = i % 2 === 0 ? 'var(--table-even-bg)' : 'transparent';
-    return `<tr style="background:${rowBg}">
-      <td style="padding:7px 8px; color:var(--text);">${name}</td>
-      <td style="padding:7px 8px; color:var(--text-muted);">${country}</td>
-      <td style="padding:7px 8px; color:var(--text-muted); font-family:monospace; font-size:0.88rem;">${uic}</td>
-      <td style="padding:7px 8px; text-align:right;">
-        ${wdId ? `<a href="https://www.wikidata.org/wiki/${escapeHtml(wdId)}" target="_blank" rel="noopener" style="color:var(--coral); font-size:0.82rem; text-decoration:none;">Wikidata ↗</a>` : ''}
+    return `<tr>
+      <td>${name}</td>
+      <td class="muted">${country}</td>
+      <td class="muted mono">${uic}</td>
+      <td class="right">
+        ${wdId ? `<a href="https://www.wikidata.org/wiki/${escapeHtml(wdId)}" target="_blank" rel="noopener" class="link-external">Wikidata ↗</a>` : ''}
       </td>
     </tr>`;
   }).join('');

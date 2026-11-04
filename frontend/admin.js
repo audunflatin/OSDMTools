@@ -31,19 +31,18 @@ function renderPendingRequests(pending) {
   if (sidebarBadge) { sidebarBadge.textContent = pending.length; sidebarBadge.style.display = ""; }
 
   tbody.innerHTML = pending.map((r, i) => {
-    const rowBg = i % 2 === 0 ? "rgba(255,89,89,0.04)" : "transparent";
     const date  = r.requested_at
       ? new Date(r.requested_at).toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" })
       : "–";
-    return `<tr style="background:${rowBg}">
-      <td style="padding:6px 8px; color:var(--text);">${escapeHtml(r.name)}</td>
-      <td style="padding:6px 8px; color:var(--text);">${escapeHtml(r.email)}</td>
-      <td style="padding:6px 8px; color:var(--text-muted);">${escapeHtml(r.org)}</td>
-      <td style="padding:6px 8px; color:var(--muted-text-alt); font-size:0.83rem;">${date}</td>
-      <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
-        <button class="btn-table" style="color:#5ac39a; border-color:rgba(90,195,154,0.35);"
+    return `<tr>
+      <td>${escapeHtml(r.name)}</td>
+      <td>${escapeHtml(r.email)}</td>
+      <td class="muted">${escapeHtml(r.org)}</td>
+      <td class="subtle">${date}</td>
+      <td class="right">
+        <button class="btn-table btn-approve"
           data-action="approve" data-email="${escapeHtml(r.email)}">${t("btn_approve")}</button>
-        <button class="btn-table" style="margin-left:6px; opacity:0.55;"
+        <button class="btn-table btn-muted"
           data-action="reject" data-email="${escapeHtml(r.email)}">${t("btn_reject")}</button>
       </td>
     </tr>`;
@@ -121,12 +120,11 @@ function renderUserList() {
 
   if (visible.length === 0) {
     const msg = isSearching ? t("no_search_results") : t("no_users");
-    tbody.innerHTML = `<tr><td colspan="5" style="padding:8px; color:var(--text-muted);">${msg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="table-message">${msg}</td></tr>`;
   } else {
     const SVG_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ac39a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>`;
     const SVG_X     = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff5959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>`;
     tbody.innerHTML = visible.map((u, i) => {
-      const rowBg = i % 2 === 0 ? "var(--table-even-bg)" : "transparent";
       let activeCell;
       if (!u.is_active) {
         activeCell = SVG_X;
@@ -137,14 +135,14 @@ function renderUserList() {
       }
       const fullName = [u.first_name, u.last_name].filter(Boolean).join(" ");
       return `
-        <tr style="background:${rowBg}">
-          <td style="padding:6px 8px; color:var(--text);">${escapeHtml(fullName)}</td>
-          <td style="padding:6px 8px; color:var(--text);">${escapeHtml(u.email)}</td>
-          <td style="text-align:center; padding:6px 8px; color:var(--text-muted);">${u.is_admin ? SVG_CHECK : "-"}</td>
-          <td style="text-align:center; padding:6px 8px; color:var(--text-muted);">${activeCell}</td>
-          <td style="text-align:right; padding:6px 8px;">
-            <button class="btn-icon" data-action="set-admin" data-email="${escapeHtml(u.email)}" data-make-admin="${!u.is_admin}" title="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" aria-label="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" style="margin-left:6px;">${u.is_admin ? "★" : "☆"}</button>
-            <button class="btn-table btn-danger" data-action="delete" data-email="${escapeHtml(u.email)}" style="margin-left:6px;">${t("btn_delete")}</button>
+        <tr>
+          <td>${escapeHtml(fullName)}</td>
+          <td>${escapeHtml(u.email)}</td>
+          <td class="center muted">${u.is_admin ? SVG_CHECK : "-"}</td>
+          <td class="center muted">${activeCell}</td>
+          <td class="right">
+            <button class="btn-icon" data-action="set-admin" data-email="${escapeHtml(u.email)}" data-make-admin="${!u.is_admin}" title="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" aria-label="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" >${u.is_admin ? "★" : "☆"}</button>
+            <button class="btn-table btn-danger" data-action="delete" data-email="${escapeHtml(u.email)}">${t("btn_delete")}</button>
           </td>
         </tr>`;
     }).join("");
@@ -185,7 +183,7 @@ async function loadUserList() {
 
   const r = await fetch("/admin/list-users");
   if (!r.ok) {
-    tbody.innerHTML = `<tr><td colspan="4" style="color:#ff5959;">${t("err_load_users")}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="table-error">${t("err_load_users")}</td></tr>`;
     return;
   }
   allUsers = await r.json();

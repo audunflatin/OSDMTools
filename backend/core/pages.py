@@ -35,7 +35,8 @@ def render_sidebar(path: str, is_admin: bool) -> str:
         html = re.sub(r"\s*<!-- ADMIN -->.*?<!-- /ADMIN -->", "", html, flags=re.S)
     # Undermeny-lenke (admin) vinner over hovedlenke med samme href
     for cls in ("sidebar-sublink", "sidebar-link"):
-        marked = html.replace(f'href="{path}" class="{cls}"', f'href="{path}" class="{cls} active"', 1)
+        pattern = re.compile(rf'(href="{re.escape(path)}" class="{cls})([ "])')
+        marked = pattern.sub(r"\1 active\2", html, count=1)
         if marked != html:
             return marked
     return html

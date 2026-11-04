@@ -2,6 +2,7 @@
 <html lang="no" translate="no">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OSDMTools – Aktivitetslogg</title>
 
   <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
@@ -9,31 +10,8 @@
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/static/favicon-512x512.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=29">
+  <link rel="stylesheet" href="/static/styles.css?v=32">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
-  <style>
-    input[type="date"].log-date {
-      padding: 0.45rem 0.65rem;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--input-bg);
-      color: var(--text);
-      font-size: 0.95rem;
-    }
-    select.log-select {
-      padding: 0.45rem 0.65rem;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--input-bg);
-      color: var(--text);
-      font-size: 0.95rem;
-      color-scheme: dark;
-    }
-    [data-theme="light"] select.log-select { color-scheme: light; }
-    .badge-ok    { color: #5ac39a; font-weight: 700; font-size: 0.8rem; }
-    .badge-error { color: #ff5959; font-weight: 700; font-size: 0.8rem; }
-    .detail-text { color: var(--text-muted); font-size: 0.82rem; font-family: monospace; }
-  </style>
 </head>
 <body>
 
@@ -43,67 +21,52 @@
 
 <div class="container">
   <section class="panel">
-    <h2>Aktivitetslogg</h2>
+    <h2 data-i18n="heading_activity_log">Aktivitetslogg</h2>
 
-    <!-- Filters -->
-    <div style="display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; margin-bottom:1rem;">
-      <input id="logSearch" type="search" placeholder="Søk e-post…" oninput="onSearch()"
-        style="flex:1; min-width:180px; padding:0.5rem 0.75rem; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:0.95rem;" />
-      <input id="logDateFrom" type="date" class="log-date" onchange="loadLog()" />
-      <input id="logDateTo"   type="date" class="log-date" onchange="loadLog()" />
-      <select id="logEventType" class="log-select" onchange="loadLog()">
-        <option value="">Alle hendelser</option>
-        <option value="login_success">Innlogging</option>
-        <option value="login_failed">Mislykket innlogging</option>
-        <option value="logout">Utlogging</option>
-        <option value="password_changed">Passord endret</option>
-        <option value="osdm_generated">OSDM generert</option>
-        <option value="discount_applied">Rabatt lagt til</option>
-        <option value="excel_exported">Excel-eksport</option>
-        <option value="contact_sent">Kontaktmelding</option>
-        <option value="admin_user_created">Bruker opprettet</option>
-        <option value="admin_user_deleted">Bruker slettet</option>
-        <option value="admin_password_reset">Passord nullstilt (admin)</option>
-        <option value="admin_set_admin">Admin-status endret</option>
-      </select>
-      <select id="logStatus" class="log-select" onchange="loadLog()">
-        <option value="">Alle statuser</option>
+    <!-- Filtre -->
+    <div class="filter-row">
+      <input id="logSearch" type="search" class="search-input" data-i18n-placeholder="log_search_ph" placeholder="Søk e-post…" oninput="onSearch()" />
+      <input id="logDateFrom" type="date" class="filter-control" data-i18n-title="log_date_from" onchange="loadLog()" />
+      <input id="logDateTo"   type="date" class="filter-control" data-i18n-title="log_date_to" onchange="loadLog()" />
+      <select id="logEventType" class="filter-control" onchange="loadLog()"></select>
+      <select id="logStatus" class="filter-control" onchange="loadLog()">
+        <option value="" data-i18n="log_all_statuses">Alle statuser</option>
         <option value="ok">OK</option>
-        <option value="error">Feil</option>
+        <option value="error" data-i18n="log_status_error">Feil</option>
       </select>
-      <button class="btn-table" onclick="resetFilter()">Nullstill</button>
+      <button class="btn-table" onclick="resetFilter()" data-i18n="log_reset_filter">Nullstill</button>
     </div>
 
-    <!-- Table -->
-    <div style="overflow-x:auto;">
-      <table style="width:100%; border-collapse:collapse; margin-bottom:0.75rem;">
+    <!-- Tabell -->
+    <div class="table-scroll">
+      <table class="data-table">
         <thead>
           <tr>
-            <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc; white-space:nowrap;">Tidspunkt</th>
-            <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Bruker</th>
-            <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Hendelse</th>
-            <th style="text-align:center; padding:6px 8px; border-bottom:2px solid #ccc;">Status</th>
-            <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Detaljer</th>
+            <th data-i18n="log_col_time">Tidspunkt</th>
+            <th data-i18n="log_col_user">Bruker</th>
+            <th data-i18n="log_col_event">Hendelse</th>
+            <th class="center" data-i18n="log_col_status">Status</th>
+            <th data-i18n="log_col_details">Detaljer</th>
           </tr>
         </thead>
         <tbody id="logTableBody">
-          <tr><td colspan="5" style="padding:8px; color:#888;">Laster logg…</td></tr>
+          <tr><td colspan="5" class="table-message" data-i18n="log_loading">Laster logg…</td></tr>
         </tbody>
       </table>
     </div>
 
     <!-- Pagination -->
-    <div id="logPagination" style="display:none; align-items:center; gap:0.75rem; margin-bottom:0.75rem;">
+    <div id="logPagination" class="pagination" style="display:none;">
       <button class="btn-table" id="logPrev" onclick="changePage(-1)">&#8592;</button>
-      <span id="logPageInfo" style="color:var(--list-text); font-size:0.9rem;"></span>
+      <span id="logPageInfo" class="pagination-info"></span>
       <button class="btn-table" id="logNext" onclick="changePage(1)">&#8594;</button>
     </div>
-    <span id="logTotal" style="color:var(--text-muted); font-size:0.85rem;"></span>
+    <span id="logTotal" class="total-count"></span>
 
   </section>
 </div>
 
-<script src="/static/i18n.js?v=60"></script>
-<script src="/static/admin-log.js?v=4"></script>
+<script src="/static/i18n.js?v=62"></script>
+<script src="/static/admin-log.js?v=5"></script>
 </body>
 </html>

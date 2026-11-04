@@ -88,22 +88,22 @@ function renderPassengers(s) {
       <div>
         <div class="pc-name">${escapeHtml(pc.name || pc.id)}</div>
         ${pc.is_adult ? `<div class="pc-adult">${t("editor_adult_label")}</div>` : ""}
-        ${!pc.is_adult ? `<div style="font-size:0.75rem;color:var(--text-muted);">${t("editor_ratio_label")}</div>` : ""}
+        ${!pc.is_adult ? `<div class="pc-sub">${t("editor_ratio_label")}</div>` : ""}
       </div>
-      <div style="text-align:right;">
+      <div class="text-right">
         ${pc.is_adult
-          ? `<input type="number" value="1.00" disabled style="width:80px; opacity:0.5;">`
+          ? `<input class="pc-ratio-input" type="number" value="1.00" disabled>`
           : `<input class="pc-ratio-input" id="ratio-${pc.id}" type="number" min="0" max="2" step="0.01" value="${pc.ratio.toFixed(4)}">`
         }
       </div>
       <div>
         ${pc.is_adult
-          ? `<button disabled style="opacity:0.4;" data-i18n="btn_save_ratio">${t("btn_save_ratio")}</button>`
+          ? `<button disabled data-i18n="btn_save_ratio">${t("btn_save_ratio")}</button>`
           : `<button onclick="saveRatio('${pc.id}')" data-i18n="btn_save_ratio">${t("btn_save_ratio")}</button>`
         }
       </div>
     </div>
-    ${pc.is_adult ? "" : `<div id="ratioMsg-${pc.id}" style="font-size:0.8rem; padding-left:0; margin-bottom:0.25rem;"></div>`}
+    ${pc.is_adult ? "" : `<div id="ratioMsg-${pc.id}" class="pc-msg"></div>`}
   `).join("");
 }
 

@@ -442,7 +442,8 @@ label {
 }
 
 input:not([type="checkbox"]),
-select {
+select,
+textarea {
   width: 100%;
   padding: 0.65rem 0.875rem;
   margin-top: 0.375rem;
@@ -459,7 +460,8 @@ select {
 }
 
 input:not([type="checkbox"]):focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: none;
   border-color: var(--border-focus);
   background: var(--hover-bg-btn);
@@ -1008,3 +1010,178 @@ input[readonly] { cursor: default; padding-right: 2rem; opacity: 1; }
 .field-group label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
 
 .truncated-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-style: italic; }
+
+/* =============================================================================
+   Tabeller, søk, sideblaing og tellere (admin, logg, stasjonssøk)
+   ============================================================================= */
+.data-table { width: 100%; border-collapse: collapse; margin-bottom: 0.75rem; }
+.data-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); white-space: nowrap; }
+.data-table td { padding: 6px 8px; color: var(--text); }
+.data-table tbody tr:nth-child(even) { background: var(--table-even-bg); }
+.data-table .muted   { color: var(--text-muted); }
+.data-table .subtle  { color: var(--muted-text-alt); font-size: 0.83rem; }
+.data-table .mono    { font-family: monospace; font-size: 0.88rem; }
+.data-table .center  { text-align: center; }
+.data-table .right   { text-align: right; white-space: nowrap; }
+.data-table .nowrap  { white-space: nowrap; }
+.data-table .row-error:nth-child(odd)  { background: rgba(255, 89, 89, 0.13); }
+.data-table .row-error:nth-child(even) { background: rgba(255, 89, 89, 0.07); }
+.data-table td.table-message { color: var(--text-muted); }
+.data-table td.table-error   { color: var(--coral); }
+/* Ventende forespørsler: dempet overskrift med korallstrek */
+.data-table--pending th { padding: 5px 8px; border-bottom: 1px solid rgba(255, 89, 89, 0.35); font-size: 0.82rem; color: var(--text-muted); font-weight: 500; }
+.data-table--pending tbody tr:nth-child(odd) { background: rgba(255, 89, 89, 0.04); }
+.data-table--pending tbody tr:nth-child(even) { background: transparent; }
+.table-scroll { overflow-x: auto; }
+.btn-table + .btn-table, .btn-icon + .btn-table { margin-left: 6px; }
+.btn-approve { color: var(--success); border-color: rgba(90, 195, 154, 0.35); }
+.btn-muted   { opacity: 0.55; }
+.link-external { color: var(--coral); font-size: 0.82rem; text-decoration: none; }
+
+.search-input {
+  width: 100%; box-sizing: border-box; margin: 0 0 0.75rem; padding: 0.5rem 0.75rem;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); font-size: 0.95rem;
+}
+.filter-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 1rem; }
+.filter-row .search-input { flex: 1; min-width: 180px; width: auto; margin: 0; }
+.filter-control {
+  padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--input-bg); color: var(--text); font-size: 0.95rem; color-scheme: dark;
+}
+[data-theme="light"] .filter-control { color-scheme: light; }
+.filter-row .filter-control { width: auto; margin-top: 0; }  /* overstyr generell input-bredde */
+.pagination { align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }  /* display settes av JS */
+.pagination-info { color: var(--list-text); font-size: 0.9rem; }
+.total-count { color: var(--text-muted); font-size: 0.85rem; }
+
+.count-badge { background: var(--coral); color: #fff; border-radius: 9999px; font-size: 0.72rem; font-weight: 700; padding: 2px 9px; line-height: 1.6; }
+.count-badge--sm { font-size: 0.65rem; padding: 1px 7px; }
+.heading-with-badge { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.75rem; }
+
+.badge-ok    { color: var(--success); font-weight: 700; font-size: 0.8rem; }
+.badge-error { color: var(--coral); font-weight: 700; font-size: 0.8rem; }
+.detail-text { color: var(--text-muted); font-size: 0.82rem; font-family: monospace; }
+
+/* Skjema-hjelpere */
+.form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem; }
+.checkbox-inline { display: flex; align-items: center; gap: 0.5rem; font-weight: normal; margin-top: 0.75rem; cursor: pointer; }
+.checkbox-inline input { width: auto; margin: 0; }
+.section-gap { margin-top: 2.5rem; }
+.section-gap-lg, .panel h2.section-gap-lg { margin-top: 3.5rem; }
+
+/* Bekreftelse (grønn) – motstykke til .validation-error */
+.success-msg {
+  margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius-sm);
+  background: var(--success-bg); border-left: 4px solid var(--success); color: var(--success);
+  font-weight: 600; font-size: 0.875rem;
+}
+.success-msg::before {
+  content: ""; display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 7px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235ac39a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+textarea { resize: vertical; font-family: inherit; }
+
+/* Min konto */
+.panel-narrow { max-width: 480px; margin-bottom: 1.5rem; }
+.panel-danger { border-color: rgba(255, 89, 89, 0.25); }
+.panel-danger h2 { color: var(--coral); }
+.confirm-box { background: rgba(255, 89, 89, 0.08); border: 1px solid rgba(255, 89, 89, 0.3); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+.confirm-box p { margin: 0 0 0.875rem; }
+.button-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.button-row button { margin-top: 0; }
+.text-muted-sm { color: var(--text-muted); font-size: 0.9rem; }
+
+/* Stasjonssøk */
+.search-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.search-row input { flex: 1; }
+.status-line { margin-bottom: 0.75rem; font-size: 0.9rem; color: var(--text-muted); }
+.status-line.is-error { color: var(--coral); }
+.data-table--compact th { font-size: 0.82rem; color: var(--text-muted); font-weight: 600; }
+.data-table--compact td { padding: 7px 8px; }
+
+/* Sidebar */
+.sidebar-link--split, .sidebar-sublink--split { display: flex; align-items: center; justify-content: space-between; }
+.sidebar-submenu { display: flex; flex-direction: column; gap: 1px; }
+
+/* Skjemaseksjoner (fare-discount, editor) */
+.label-optional { opacity: 0.5; font-weight: normal; }
+.step-form { margin-top: 2rem; }
+.form-section { margin-top: 1.5rem; }
+.field-label { display: block; margin-bottom: 0.5rem; }
+.toggle-row { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.toggle-row label { margin-top: 0; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+.checkbox-row { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
+.field-narrow { max-width: 180px; }
+.btn-sm.btn-add { margin-top: 0.5rem; }
+.keep-space { visibility: hidden; }
+.code-hint { color: var(--muted-text-alt); }
+
+/* OSDM-editor */
+.beta-tag--lg { padding: 2px 7px; line-height: 1.6; }
+.editor-body { margin-top: 1.5rem; }
+.subheading { font-size: 1rem; margin-bottom: 0.75rem; }
+.field-group--end { justify-content: flex-end; }
+.form-row--spaced { margin-bottom: 1rem; }
+.section-gap-sm { margin-top: 1.5rem; }
+.center-block { text-align: center; padding: 2rem 0; }
+.pc-sub { font-size: 0.75rem; color: var(--text-muted); }
+.pc-msg { font-size: 0.8rem; margin-bottom: 0.25rem; }
+.text-right { text-align: right; }
+input:disabled { opacity: 0.5; }
+
+/* Valutakurs-status (priser fra avstandsfil) */
+.rate-ok { color: var(--text-muted); }
+.rate-ok::before {
+  content: ""; display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235ac39a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+.rate-pending { opacity: 0.5; }
+.rate-failed  { opacity: 0.45; }
+
+/* =============================================================================
+   Mobil og smale skjermer
+   ============================================================================= */
+.menu-toggle, .nav-backdrop { display: none; }
+.lang-selector .theme-btn { margin-right: 4px; }
+
+@media (max-width: 800px) {
+  body { padding-left: 0; }
+
+  /* Sidebar som uttrekksmeny bak ☰ */
+  .menu-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    position: absolute; top: 0.45rem; left: 0.75rem; margin: 0; padding: 0.25rem 0.6rem;
+    font-size: 1.3rem; line-height: 1; border: 1px solid var(--btn-sm-border); background: transparent; color: var(--text);
+  }
+  .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; width: 260px; box-shadow: none; }
+  body.nav-open .sidebar { transform: translateX(0); box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35); }
+  body.nav-open .nav-backdrop { display: block; position: fixed; inset: 3rem 0 0 0; background: rgba(0, 0, 0, 0.45); z-index: 1000; }
+
+  /* Toppfelt: kompakt */
+  .app-header { padding: 0.75rem; }
+  .lang-selector { right: 0.75rem; gap: 0; }
+  .lang-btn { font-size: 1.05rem; padding: 2px 3px; }
+
+  /* Innhold */
+  .container { padding: 0.5rem; }
+  .panel { padding: 1.25rem 1rem; }
+  .form-grid-2, .form-row { grid-template-columns: 1fr; }
+  .pct-row { flex-wrap: wrap; }
+  .pct-row > div { max-width: none; }
+  .filter-row .search-input, .filter-row .filter-control { flex: 1 1 100%; width: 100%; }
+  .editor-tabs { overflow-x: auto; }
+  .tab-btn { white-space: nowrap; }
+
+  /* Brede tabeller ruller sidelengs i stedet for å sprenge siden */
+  .data-table, .rc-table { display: block; overflow-x: auto; }
+  .pair-row { flex-wrap: wrap; }
+
+  /* Knapper under hverandre ved behov */
+  #resultBox ~ button, .button-row button { max-width: 100%; }
+}
+
+@media (max-width: 420px) {
+  .lang-sep { display: none; }
+  .lang-btn { font-size: 0.95rem; }
+}

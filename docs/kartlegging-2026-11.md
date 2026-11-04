@@ -2,7 +2,7 @@
 
 Gjennomgang av backend, prislogikk, sikkerhet og frontend, gjort 4. november 2026.
 
-**Status:** K1–K3, H1–H5, M1–M8 og S1–S9 er rettet 4. november 2026. S10, U2, U4 og U5 er også rettet. U6 er også rettet. Gjenstår: U1 (mobil), U3 (resten av inline-stilene).
+**Status:** K1–K3, H1–H5, M1–M8 og S1–S9 er rettet 4. november 2026. S10, U2, U4 og U5 er også rettet. U6, U3 og U1 er også rettet. Hele kartleggingen er gjennomført.
 
 Hvert funn har en ID (K = kritisk, H = høy, M = middels, S = struktur, U = UX/GUI) slik at vi kan vise til dem når vi tar dem.
 
@@ -136,9 +136,9 @@ Med begge feilene rettet endres **0** farer.
 
 | ID | Funn | Forslag |
 |---|---|---|
-| U1 | Bare landingssiden har `<meta name="viewport">`, og `styles.css` har ingen `@media`-regler. Appen er ikke laget for mobil eller nettbrett. | Grunnleggende responsivitet (sidebar som meny på smale skjermer). Lav prioritet for et B2B-verktøy. |
+| U1 ✅ | Bare landingssiden har `<meta name="viewport">`, og `styles.css` har ingen `@media`-regler. Appen er ikke laget for mobil eller nettbrett. | Grunnleggende responsivitet (sidebar som meny på smale skjermer). Lav prioritet for et B2B-verktøy. |
 | U2 ✅ | Sidebaren er kopiert inn i 13 HTML-filer. En ny tjeneste krever endringer i alle. | Generer sidebaren fra én kilde (JS eller server) |
-| U3 (delvis: fare-discount, editor, avstandsfil, prisregulering) | Mye inline-`style` (opptil 35 per side) | Flytt til klasser i `styles.css` |
+| U3 ✅ | Mye inline-`style` (opptil 35 per side) | Flytt til klasser i `styles.css` |
 | U4 ✅ | Hardkodet tekst forbi i18n, blant annet tabelloverskriftene og «Viser de første 500 …» i OSDM-editoren, «fares»/«prices» i statistikk-chipsene og «Laster…» i admin-loggen | Inn i `i18n.js` |
 | U5 ✅ | Fremdrift og opplasting er implementert separat på hver side | Felles komponent for filopplasting med fremdriftsindikator |
 | U6 ✅ | Genereringsresultatet viser fem eksempler, men ikke hva som *ikke* ble oppdatert (se H3) | Oppsummering med antall oppdaterte og hoppet over |

@@ -74,9 +74,8 @@ function renderPairHtml(pair, idx) {
           <div id="drop_to_${idx}" class="picker-dropdown" style="display:none;"></div>
         </div>
       </div>
-      <button type="button" class="btn-remove-pair"
-        onclick="removePair(${idx})" title="${t('title_remove_pair')}"
-        ${!removable ? 'style="visibility:hidden;"' : ''}>${SVG_X}</button>
+      <button type="button" class="btn-remove-pair${removable ? "" : " keep-space"}"
+        onclick="removePair(${idx})" title="${t('title_remove_pair')}">${SVG_X}</button>
     </div>`;
 }
 
@@ -361,7 +360,7 @@ function carrierRemove(code) {
 function renderCarrierChips() {
   document.getElementById("carrierChips").innerHTML = selectedCarriers.map(c =>
     `<div class="picker-chip">
-      <span>${carrierDisplayName(c)} <span style="color:var(--muted-text-alt)">${c.code}</span></span>
+      <span>${carrierDisplayName(c)} <span class="code-hint">${c.code}</span></span>
       <button type="button" onclick="carrierRemove('${c.code}')" title="${t('title_remove')}">${SVG_X}</button>
     </div>`
   ).join("");

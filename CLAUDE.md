@@ -64,6 +64,12 @@ backend/
 - Fremdrift: `<div id="…" class="upload-progress" style="display:none;"></div>` — innholdet fylles av common.js; styr med `showProgress(id, pct, stage)` / `hideProgress(id)`. Stegtekst = `validate_stage_<stage>` i i18n (uploading, reading, validating, converting, processing).
 - Meldinger: `renderOsdmSummary` (`.info-box`), `renderWarnings` (`.warnings-box`), `renderError` (`.status-error`), `setValidationError` (`#validationError`), `showResult(text, ok)`/`hideResult` (`#resultBox` + `#finalStatus`; første linje er overskrift), `deliverySummaryLines`, `exportExcel(startUrl)`.
 
+**Mobil:** alle sider (unntatt presentasjonen) har `<meta name="viewport">`. Under 800 px blir sidebaren en uttrekksmeny bak ☰ (`.menu-toggle` i `partials/header.html`, `body.nav-open`), skjema går til én kolonne og `.data-table` ruller sidelengs. Mobil-regler ligger samlet nederst i `styles.css`. Nye sider trenger viewport-taggen.
+
+**Ingen inline-stiler.** Bruk klasser i `styles.css` (tabeller: `.data-table` med `.muted`/`.center`/`.right`, søk: `.search-input`/`.filter-row`/`.filter-control`, meldinger: `.success-msg`/`.validation-error`, m.fl.). Kun `style="display:none;"` som starttilstand er greit. Sider uten tema-støtte (landing, innlogging, personvern, presentasjon) er bevisst alltid mørke.
+
+**Escape alt fra serveren i innerHTML** (`escapeHtml`). Aktivitetsloggen viste e-post fra mislykket innlogging og data fra tilgangsskjemaet uescapet — lagret XSS mot admin (rettet nov. 2026).
+
 Verktøy som lager en OSDM-fil (generering, prisregulering, fare-discount) viser resultatboks + «Last ned oppdatert OSDM JSON» + «Last ned Excel». Hovedknapp: `.btn-primary`. Beskrivelse under tittelen: `.panel-desc`. Ingen hardkodede farger i side-CSS — bruk tema-variablene (`var(--text)`, `var(--surface)` …), ellers blir siden feil i lyst tema.
 
 **Progress bar (ikke spinner) på alle filopplastingssider.**
@@ -332,24 +338,24 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 
 | Fil | Versjon |
 |---|---|
-| `styles.css` | v=29 |
-| `i18n.js` | v=60 (alle sider, også innloggingssidene) |
-| `app.js` | v=27 |
-| `admin.js` | v=22 |
-| `admin-log.js` | v=4 |
+| `styles.css` | v=32 |
+| `i18n.js` | v=62 (alle sider, også innloggingssidene) |
+| `app.js` | v=28 |
+| `admin.js` | v=23 |
+| `admin-log.js` | v=5 |
 | `osdmtoExcel.js` | v=9 |
-| `fareDiscount.js` | v=20 |
+| `fareDiscount.js` | v=21 |
 | `priceAdjust.js` | v=13 |
 | `fixOsdm.js` | v=4 |
-| `osdmEditor.js` | v=4 |
-| `stationLookup.js` | v=1 |
+| `osdmEditor.js` | v=5 |
+| `stationLookup.js` | v=2 |
 | `presentation.js` | v=8 |
 | `common.js` | v=5 (alle verktøysider) |
 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-Alle HTML-filer laster `i18n.js` med samme versjon (v=60) — bump alle samtidig.
+Alle HTML-filer laster `i18n.js` med samme versjon (v=62) — bump alle samtidig.
 
 ---
 

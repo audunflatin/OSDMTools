@@ -463,7 +463,7 @@ def test_shared_sidebar_marks_active_page_and_hides_admin(path, active_href):
     import re
     html = _login("a@test.no").get(path).text
     assert "<!-- SIDEBAR -->" not in html and "<!-- APP_HEADER -->" not in html
-    assert re.findall(r'href="([^"]+)" class="sidebar-link active"', html) == [active_href]
+    assert re.findall(r'href="([^"]+)" class="sidebar-link active[ "]', html) == [active_href]
     assert "/admin/users" not in html
     assert 'class="logout-button"' in html
 
@@ -543,3 +543,9 @@ def test_price_adjust_zero_reports_no_changed_relations():
     })
     summary = r.json()["summary"]
     assert summary["rcsChanged"] == 0 and summary["priceExamples"] == []
+
+
+def test_sidebar_active_link_with_extra_classes():
+    """Lenker med flere klasser (editor med BETA-merke) skal også markeres aktive."""
+    html = _login("a@test.no").get("/osdm-editor").text
+    assert 'href="/osdm-editor" class="sidebar-link active sidebar-link--split"' in html

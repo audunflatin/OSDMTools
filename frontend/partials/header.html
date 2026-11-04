@@ -1,8 +1,9 @@
 <!-- Felles toppfelt (tema, sprak, logg ut). Settes inn av serve_page der siden har APP_HEADER-markoren. -->
 <header class="app-header">
+  <button class="menu-toggle" type="button" data-i18n-title="nav_menu" title="Meny" aria-label="Meny"
+          onclick="document.body.classList.toggle('nav-open')">☰</button>
   <span class="lang-selector">
     <button class="theme-btn" id="themeToggle" onclick="toggleTheme()"><!-- filled by JS --></button>
-    <span style="width:4px;display:inline-block;"></span>
     <button class="lang-btn" data-lang="no" onclick="setLanguage('no')" title="Norsk">🇳🇴</button>
     <button class="lang-btn" data-lang="en" onclick="setLanguage('en')" title="English">🇬🇧</button>
     <button class="lang-btn" data-lang="de" onclick="setLanguage('de')" title="Deutsch">🇩🇪</button>
@@ -12,3 +13,4 @@
     <a href="/logout" class="logout-button" data-i18n="logout">Logg ut</a>
   </span>
 </header>
+<div class="nav-backdrop" onclick="document.body.classList.remove('nav-open')"></div>

@@ -139,11 +139,11 @@ async function fetchExchangeRate() {
 
   if (currency === "EUR") {
     rateInput.value = "1";
-    rateStatus.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5ac39a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;margin-right:4px"><path d="M20 6 9 17l-5-5"/></svg>${t("rate_eur_no_conversion")}`;
+    rateStatus.innerHTML = `<span class="rate-ok">${t("rate_eur_no_conversion")}</span>`;
     return;
   }
 
-  rateStatus.innerHTML = `<span style="opacity:0.5;">${t("rate_fetching")}</span>`;
+  rateStatus.innerHTML = `<span class="rate-pending">${t("rate_fetching")}</span>`;
 
   try {
     const r   = await fetch(`/ui/exchange-rate?from_=EUR&to=${currency}`);
@@ -153,16 +153,15 @@ async function fetchExchangeRate() {
       const eurPerCurr = (1 / currPerEur).toFixed(6);
       rateInput.value  = eurPerCurr;
       rateStatus.innerHTML =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5ac39a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;margin-right:4px"><path d="M20 6 9 17l-5-5"/></svg>` +
-        `${t("rate_fetched")
+        `<span class="rate-ok">${t("rate_fetched")
           .replace("{rate}", currPerEur.toFixed(4))
           .replace("{currency}", currency)
-          .replace("{date}", res.date)}`;
+          .replace("{date}", res.date)}</span>`;
     } else {
-      rateStatus.innerHTML = `<span style="opacity:0.45;">${t("rate_fetch_failed")}</span>`;
+      rateStatus.innerHTML = `<span class="rate-failed">${t("rate_fetch_failed")}</span>`;
     }
   } catch {
-    rateStatus.innerHTML = `<span style="opacity:0.45;">${t("rate_fetch_failed")}</span>`;
+    rateStatus.innerHTML = `<span class="rate-failed">${t("rate_fetch_failed")}</span>`;
   }
 }
 
