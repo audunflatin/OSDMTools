@@ -194,7 +194,11 @@ def _price_adjust(client, pct, delivery_id="7.0"):
         "pct": str(pct), "delivery_id": delivery_id, "valid_from": "2026-12-13", "valid_to": "2027-12-11",
     })
     assert r.status_code == 200, r.text
-    return json.loads(r.content)
+    body = r.json()
+    assert body["ok"] and body["summary"]["faresUpdated"] > 0
+    download = client.get(f"/price-adjust/download/{body['outputFile']}")
+    assert download.status_code == 200
+    return json.loads(download.content)
 
 
 def _fare_price_map(data):
@@ -429,3 +433,16 @@ def test_login_upgrades_old_password_hash():
     _login("f@test.no")
     with SessionLocal() as db:
         assert not needs_rehash(db.query(User).filter(User.email == "f@test.no").first().password_hash)
+
+
+def test_price_adjust_result_can_be_exported_to_excel():
+    """Prisregulering har samme «Last ned OSDM» + «Last ned Excel» som generering."""
+    client = _login("a@test.no")
+    _price_adjust(client, 3, delivery_id="7.2")
+    job = client.post("/price-adjust/excel").json()
+    status = _poll(client, f"/frontend/osdm-to-csv-status/{job['jobId']}")
+    assert status["status"] == "done" and status["filename"] == "1076_7.2_prod.xlsx"
+
+    # En annen bruker har ingen regulert fil
+    other = _login("b@test.no")
+    assert other.get("/price-adjust/download/1076_7.2_prod.json").status_code == 404

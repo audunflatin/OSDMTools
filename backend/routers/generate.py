@@ -517,13 +517,15 @@ def excel_from_generated(request: Request):
 @router.get("/ui/download-osdm/{filename}")
 def download_osdm(filename: str, request: Request):
     require_login(request)
-    user_email = request.session.get("user_email", "")
-    osdm_entry = OSDM_STORE.get(user_email)
-    if not osdm_entry or osdm_entry["filename"] != filename:
+    return stored_file_response(OSDM_STORE.get(request.session["user_email"]), filename)
+
+
+def stored_file_response(entry: dict | None, filename: str) -> Response:
+    """Last ned en lagret OSDM-fil (generert eller regulert) hvis filnavnet stemmer."""
+    if not entry or entry["filename"] != filename:
         raise HTTPException(status_code=404, detail="OSDM-fil finnes ikke")
-    safe_name = _safe_filename(filename)
     return Response(
-        content=osdm_entry["content"],
+        content=entry["content"],
         media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        headers={"Content-Disposition": f'attachment; filename="{_safe_filename(filename)}"'},
     )

@@ -9,35 +9,8 @@
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/static/favicon-512x512.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=27">
+  <link rel="stylesheet" href="/static/styles.css?v=28">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
-  <style>
-    .btn-primary {
-      background: #ff5959; color: white; border: none; border-radius: 8px;
-      padding: 0.65rem 2rem; font-size: 1rem; font-weight: 600; cursor: pointer;
-      font-family: inherit; margin-top: 1.75rem; transition: background 0.15s;
-    }
-    .btn-primary:hover { background: #e04444; }
-    .btn-primary:disabled { opacity: 0.45; cursor: default; }
-
-    .pct-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 1rem;
-      margin-top: 0;
-    }
-    .pct-row > div { flex: 1; max-width: 220px; }
-    .factor-display {
-      padding-bottom: 0.7rem;
-      font-size: 0.95rem;
-      color: rgba(255,255,255,0.45);
-      white-space: nowrap;
-    }
-    .factor-display span {
-      color: rgba(255,255,255,0.85);
-      font-weight: 600;
-    }
-  </style>
 </head>
 <body>
 
@@ -107,6 +80,7 @@
       </div>
     </div>
     <div id="osdmSummary"></div>
+    <div id="osdmWarnings"></div>
 
     <div class="pct-row">
       <div>
@@ -114,7 +88,7 @@
         <input type="number" id="adjustPct" step="0.1" data-i18n-placeholder="placeholder_adjust_pct" />
       </div>
       <div class="factor-display" id="factorDisplay" style="display:none;">
-        Faktor: <span id="factorVal"></span>
+        <span data-i18n="label_factor">Faktor</span>: <span id="factorVal"></span>
       </div>
     </div>
 
@@ -145,21 +119,28 @@
       <label data-i18n="label_valid_to">Gyldig til</label>
       <input id="validTo" type="date" required />
 
-      <div id="statusMsg" style="display:none; margin-top:1.25rem; padding:0.65rem 1rem; border-radius:4px; font-size:0.9rem;"></div>
+      <div id="validationError" class="validation-error" style="display:none;"></div>
 
-      <button class="btn-primary" id="adjustBtn" data-i18n="btn_adjust">Juster og last ned</button>
+      <button class="btn-primary" id="adjustBtn" data-i18n="btn_adjust">Juster priser</button>
       <div id="spinnerAdjust" class="spinner"></div>
+
+      <div id="resultBox" class="status-ok" style="display:none;">
+        <div id="finalStatus" class="result-text"></div>
+      </div>
+
+      <button id="downloadBtn" onclick="downloadAdjusted()" disabled data-i18n="btn_download">
+        Last ned OSDM JSON
+      </button>
+      <button id="downloadExcelBtn" onclick="downloadAdjustedExcel()" disabled data-i18n="btn_download_excel">
+        Last ned Excel
+      </button>
+      <div id="spinnerExcel" class="spinner"></div>
     </div>
   </section>
 </div>
 
-<script src="/static/i18n.js?v=56"></script>
-<script>
-  if (typeof window.IS_ADMIN !== "undefined" && window.IS_ADMIN) {
-    document.getElementById("adminLink").style.display = "";
-    document.getElementById("adminSubmenu").style.display = "flex";
-  }
-</script>
-<script src="/static/priceAdjust.js?v=10"></script>
+<script src="/static/i18n.js?v=57"></script>
+<script src="/static/common.js?v=1"></script>
+<script src="/static/priceAdjust.js?v=11"></script>
 </body>
 </html>

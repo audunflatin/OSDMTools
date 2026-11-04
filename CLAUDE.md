@@ -57,6 +57,8 @@ backend/
 
 ## Designkrav som alltid gjelder
 
+**Felles frontend-hjelpere i `common.js`** (lastes etter `i18n.js`, før side-JS): `validateOsdmUpload`, `showProgress`, `renderOsdmSummary`, `renderWarnings`, `renderError`, `setValidationError`, `showResult`/`hideResult`, `deliverySummaryLines`, `exportExcel`, `escapeHtml`, og admin-meny. Bruk dem på nye sider, så meldinger ser like ut overalt: infoboks (`.info-box`) etter validering, advarsler (`.warnings-box`), inndatafeil i `#validationError` (`.validation-error`), resultat i `#resultBox` (grønn `.status-ok` / rød `.status-error`, første linje er overskrift), hovedknapp med `.btn-primary`. «Priser fra avstandsfil» og «Prisregulering» følger dette mønsteret.
+
 **Progress bar (ikke spinner) på alle filopplastingssider.**
 Nye sider med filopplasting og tung backend-prosessering skal bruke en styled progress bar med prosent og steg-tekst (`.progress-fill`, `.progress-pct`, `.progress-stage`), ikke en spinner. Se `fare-discount.html` / `osdmtoexcel.html` for HTML-mønster og `fareDiscount.js` for JS-mønster.
 
@@ -100,6 +102,7 @@ Definert i `backend/core/state.py`:
 ```python
 TEN_STORE: dict                # user_email → {"table": [(fra_km, til_km, pris)], "created_at": float}
 OSDM_STORE: dict               # user_email → {"filename": str, "content": str, "created_at": float}
+ADJUST_STORE: dict             # user_email → {"filename": str, "content": str, "created_at": float} (prisregulering)
 INPUT_OSDM_STORE: dict         # user_email → {"filename": str, "bytes": bytes, "created_at": float}
 FIX_OSDM_STORE: dict           # user_email → {"filename": str, "content": bytes, "created_at": float}
 EDIT_STORE: dict               # user_email → osdm_editor store entry + {"filename": str, "created_at": float}
@@ -123,7 +126,9 @@ En bakgrunnstråd rydder alle stores eldre enn 2 timer hvert 10. minutt (`XLSX_J
 | Kall | Handling |
 |---|---|
 | `GET /price-adjust` | Serverer `price-adjust.html` |
-| `POST /price-adjust` | Mottar OSDM-fil + %, beregner nye priser, oppdaterer delivery-felt, returnerer justert fil |
+| `POST /price-adjust` | Mottar OSDM-fil + %, beregner nye priser, oppdaterer delivery-felt, lagrer i `ADJUST_STORE[user_email]`, returnerer `{ok, outputFile, summary}` (samme format som generering) |
+| `GET /price-adjust/download/{filename}` | Laster ned regulert fil |
+| `POST /price-adjust/excel` | Starter Excel-jobb av regulert fil (poll via `/frontend/osdm-to-csv-status/{jobId}`) |
 
 Parametere: `osdm_file`, `pct`, `delivery_id`, `previous_delivery_id`, `environment`, `optional_delivery`, `valid_from`, `valid_to`.
 Algoritme (november 2026): samme kode som generering — `osdm_editor.scale_prices()`. Ny voksenpris = gammel voksenpris × `(1 + pct/100)` per (RC, carrier, klasse), rundet opp; øvrige kategorier = avrundet voksenpris × eksakt ratio; FIP o.l. proporsjonalt med primærfaren. Grupper uten voksenfare skaleres direkte. Delivery-felt og ID-prefix settes med `_apply_delivery_fields` / `_serialize_with_new_prefix`, felles med generering. Leser hele filen inn i minnet (se fallgruver).
@@ -316,23 +321,24 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 
 | Fil | Versjon |
 |---|---|
-| `styles.css` | v=27 |
-| `i18n.js` | v=56 (alle hovudsider) / v=19 (login-sider) |
-| `app.js` | v=23 |
+| `styles.css` | v=28 |
+| `i18n.js` | v=57 (alle hovudsider) / v=19 (login-sider) |
+| `app.js` | v=24 |
 | `admin.js` | v=21 |
 | `admin-log.js` | v=4 |
 | `osdmtoExcel.js` | v=7 |
 | `fareDiscount.js` | v=18 |
-| `priceAdjust.js` | v=10 |
+| `priceAdjust.js` | v=11 |
 | `fixOsdm.js` | v=3 |
 | `osdmEditor.js` | v=2 |
 | `stationLookup.js` | v=1 |
 | `presentation.js` | v=8 |
+| `common.js` | v=1 (index, price-adjust) |
 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-HTML-filer som laster `i18n.js` med v=56:
+HTML-filer som laster `i18n.js` med v=57:
 `landing.html`, `index.html`, `admin.html`, `admin-log.html`, `fare-discount.html`,
 `contact.html`, `endre-passord.html`, `min-konto.html`, `osdmtoexcel.html`, `price-adjust.html`, `fix-osdm.html`, `osdm-editor.html`, `station-lookup.html`
 

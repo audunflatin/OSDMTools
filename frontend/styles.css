@@ -528,19 +528,25 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Primærknapp (generer, logg inn osv.) */
-#generateBtn:not(:disabled),
+/* Primærknapp (generer, juster, logg inn osv.) */
+.btn-primary:not(:disabled),
 button[type="submit"] {
   background: var(--coral);
   border-color: var(--coral);
   color: #ffffff;
 }
 
-#generateBtn:not(:disabled):hover,
+.btn-primary:not(:disabled):hover,
 button[type="submit"]:hover {
   background: var(--coral-hover);
   border-color: var(--coral-hover);
 }
+
+/* Prosent + beregnet faktor på én rad (prisregulering) */
+.pct-row { display: flex; align-items: flex-end; gap: 1rem; }
+.pct-row > div { flex: 1; max-width: 220px; }
+.factor-display { padding-bottom: 0.7rem; font-size: 0.95rem; color: var(--text-muted); white-space: nowrap; }
+.factor-display #factorVal { color: var(--text); font-weight: 600; }
 
 .btn-table {
   margin-top: 0;
@@ -592,7 +598,9 @@ pre {
 
 #resultBox pre { background: transparent; border: none; padding: 0; margin: 0; }
 
-#resultBox { margin-top: 1.25rem; padding: 1.25rem 1.5rem; border-radius: var(--radius-sm); }
+#resultBox { margin-top: 1.25rem; padding: 1.25rem 1.5rem; border-radius: var(--radius-sm); align-items: flex-start; }
+#resultBox::before { margin-top: 2px; flex-shrink: 0; }            /* ikon på linje med overskriften */
+#resultBox .result-text::first-line { font-weight: 700; }           /* første linje = overskrift */
 
 .result-text {
   white-space: pre-wrap;

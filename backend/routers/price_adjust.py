@@ -1,11 +1,15 @@
 """Prisregulering: skaler alle priser med fast prosent."""
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse
 import logging
+import time
 
 import backend.osdm_editor as osdm_editor
 from backend.core.security import _safe_filename, require_login, log_event
 from backend.core.pages import serve_page
+from backend.core.state import ADJUST_STORE
+from backend.routers.excel import start_xlsx_job
+from backend.routers.generate import stored_file_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,22 +56,46 @@ def price_adjust(
         raise HTTPException(status_code=400, detail="Mangler felt i OSDM-strukturen: 'prices'")
 
     result = osdm_editor.scale_prices(store_entry, factor)
-    osdm_editor.apply_delivery_fields(
+    utc_offset = osdm_editor.apply_delivery_fields(
         store_entry, delivery_id, previous_delivery_id, optional_delivery, environment, valid_from, valid_to,
     )
     result_text, fare_provider = osdm_editor.serialize_with_new_prefix(store_entry, delivery_id)
 
     env_suffix = "test" if environment == "test" else "prod"
     filename = _safe_filename(f"{fare_provider}_{delivery_id}_{env_suffix}.json")
+    user_email = request.session["user_email"]
+    ADJUST_STORE[user_email] = {"filename": filename, "content": result_text, "created_at": time.time()}
 
     log_event(
-        request.session.get("user_email"), "price_adjust",
+        user_email, "price_adjust",
         detail={"factor": factor, "filename": osdm_file.filename, "fares_updated": result["updated_fares"],
                 "delivery_id": delivery_id},
     )
 
-    return Response(
-        content=result_text.encode("utf-8"),
-        media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    # Samme svarformat som generering, så frontend kan vise resultatet likt
+    return {
+        "ok": True,
+        "outputFile": filename,
+        "summary": {
+            "environment": environment,
+            "utcOffset": utc_offset,
+            "factor": factor,
+            "faresUpdated": result["updated_fares"],
+        },
+    }
+
+
+@router.get("/price-adjust/download/{filename}")
+def price_adjust_download(filename: str, request: Request):
+    require_login(request)
+    return stored_file_response(ADJUST_STORE.get(request.session["user_email"]), filename)
+
+
+@router.post("/price-adjust/excel")
+def price_adjust_excel(request: Request):
+    require_login(request)
+    user_email = request.session["user_email"]
+    entry = ADJUST_STORE.get(user_email)
+    if not entry:
+        raise HTTPException(status_code=400, detail="Ingen regulert OSDM-fil tilgjengelig")
+    return {"jobId": start_xlsx_job(entry["content"].encode("utf-8"), user_email)}

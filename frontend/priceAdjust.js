@@ -1,248 +1,122 @@
-// priceAdjust.js – Prisregulering: skaler OSDM-priser med fast faktor
+// priceAdjust.js – Prisregulering: skaler OSDM-priser med fast prosent.
+// Bruker hjelperne i common.js, slik at flyt og meldinger er like som «Priser fra avstandsfil».
 
-const osdmFileInput     = document.getElementById("osdmFile");
-const adjustPctInput    = document.getElementById("adjustPct");
-const adjustBtn         = document.getElementById("adjustBtn");
-const statusMsg         = document.getElementById("statusMsg");
-const factorDisplay     = document.getElementById("factorDisplay");
-const factorVal         = document.getElementById("factorVal");
-const deliveryIdInput   = document.getElementById("deliveryId");
-const prevDeliveryInput = document.getElementById("previousDeliveryId");
-const envSelect         = document.getElementById("environment");
-const optDeliverySelect = document.getElementById("optionalDelivery");
-const validFromInput    = document.getElementById("validFrom");
-const validToInput      = document.getElementById("validTo");
-const summaryEl         = document.getElementById("osdmSummary");
-const spinnerAdjust     = document.getElementById("spinnerAdjust");
-
-// ── Progress-hjelpere ─────────────────────────────────────────────────────────
-
-function showProgress(containerId, pct, stage) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  el.style.display = "";
-  el.querySelector(".progress-fill").style.width = pct + "%";
-  el.querySelector(".progress-pct").textContent = pct + "%";
-  const stageEl = el.querySelector(".progress-stage");
-  if (stageEl) stageEl.textContent = (stage ? t("validate_stage_" + stage) : "") || "";
-}
-
-function hideProgress(containerId) {
-  const el = document.getElementById(containerId);
-  if (el) el.style.display = "none";
-}
-
-function uploadWithProgress(url, formData, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const startTime = Date.now();
-    let hasRealProgress = false;
-
-    const timer = setInterval(() => {
-      if (!hasRealProgress) {
-        const elapsed = (Date.now() - startTime) / 1000;
-        onProgress(0.48 * (1 - Math.exp(-elapsed / 60)));
-      }
-    }, 500);
-
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable && e.total > 0) {
-        hasRealProgress = true;
-        onProgress(e.loaded / e.total);
-      }
-    };
-    xhr.onload = () => {
-      clearInterval(timer);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
-      } else { reject(new Error(xhr.statusText || `HTTP ${xhr.status}`)); }
-    };
-    xhr.onerror = () => { clearInterval(timer); reject(new Error("Network error")); };
-    xhr.open("POST", url);
-    xhr.send(formData);
-  });
-}
-
-async function pollJob(jobId, progressEndpoint, containerId, base = 0) {
-  while (true) {
-    await new Promise(r => setTimeout(r, 600));
-    try {
-      const r = await fetch(`${progressEndpoint}/${jobId}`);
-      const data = await r.json();
-      if (data.status === "done") return data.result;
-      if (data.status === "error") return { ok: false, error: data.error };
-      const pct = base + Math.round((data.percent || 0) / 100 * (100 - base));
-      showProgress(containerId, pct, data.stage || "validating");
-    } catch {
-      return { ok: false, error: t("unknown_error") };
-    }
-  }
-}
+const osdmFileInput = document.getElementById("osdmFile");
+const adjustPctInput = document.getElementById("adjustPct");
+const adjustBtn = document.getElementById("adjustBtn");
+let lastAdjustedFile = null;
 
 // ── OSDM-validering ───────────────────────────────────────────────────────────
 
 async function validateOsdmFile() {
+  const summaryEl = document.getElementById("osdmSummary");
+  const warningsEl = document.getElementById("osdmWarnings");
   summaryEl.innerHTML = "";
-  hideStatus();
+  warningsEl.innerHTML = "";
+  resetResult();
   document.getElementById("deliveryFields").style.display = "none";
 
-  if (!osdmFileInput.files[0]) return;
+  const file = osdmFileInput.files[0];
+  if (!file) return;
 
-  showProgress("osdmProgress", 0, "uploading");
-
-  const fd = new FormData();
-  fd.append("osdmFile", osdmFileInput.files[0]);
-
-  try {
-    const { jobId } = await uploadWithProgress("/ui/validate-osdm", fd, frac =>
-      showProgress("osdmProgress", Math.round(frac * 50), "uploading")
-    );
-
-    const res = await pollJob(jobId, "/ui/validate-osdm/progress", "osdmProgress", 50);
-
-    hideProgress("osdmProgress");
-
-    if (!res || !res.ok) {
-      summaryEl.innerHTML = `<pre class="status-error">${(res && res.error) || t("unknown_error")}</pre>`;
-      return;
-    }
-
-    summaryEl.innerHTML = `
-      <div class="info-box">
-        <div>
-          <strong>${t("osdm_validated")}</strong>
-          <div class="info-meta">
-            ${t("label_delivery_id")}: <b>${res.deliveryId}</b> &nbsp;·&nbsp;
-            ${t("label_provider")}: <b>${res.fareProvider || "—"}</b> &nbsp;·&nbsp;
-            ${t("label_fare_count_short")}: <b>${res.fareCount.toLocaleString()}</b> &nbsp;·&nbsp;
-            ${t("label_price_count_short")}: <b>${res.priceCount.toLocaleString()}</b>
-          </div>
-        </div>
-      </div>`;
-
-    if (res.deliveryId) prevDeliveryInput.value = res.deliveryId;
-    document.getElementById("deliveryFields").style.display = "";
-
-  } catch {
-    hideProgress("osdmProgress");
-    summaryEl.innerHTML = `<pre class="status-error">${t("unknown_error")}</pre>`;
+  const res = await validateOsdmUpload(file, "osdmProgress");
+  if (!res || !res.ok) {
+    summaryEl.innerHTML = renderError(res && res.error);
+    return;
   }
+
+  summaryEl.innerHTML = renderOsdmSummary(res);
+  warningsEl.innerHTML = renderWarnings(res.warnings, t("osdm_warnings_title"));
+  if (res.deliveryId) document.getElementById("previousDeliveryId").value = res.deliveryId;
+  document.getElementById("deliveryFields").style.display = "";
 }
 
 // ── Faktor-visning ────────────────────────────────────────────────────────────
 
 adjustPctInput.addEventListener("input", () => {
   const pct = parseFloat(adjustPctInput.value);
+  const factorDisplay = document.getElementById("factorDisplay");
   if (!isNaN(pct) && pct !== 0) {
-    const factor = (1 + pct / 100).toFixed(4).replace(/\.?0+$/, "");
-    factorVal.textContent = factor;
+    document.getElementById("factorVal").textContent = (1 + pct / 100).toFixed(4).replace(/\.?0+$/, "");
     factorDisplay.style.display = "";
   } else {
     factorDisplay.style.display = "none";
   }
+  setValidationError("");
 });
 
-["validFrom", "validTo"].forEach(id => {
-  document.getElementById(id).addEventListener("change", () => hideStatus());
+["deliveryId", "validFrom", "validTo"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => setValidationError(""));
 });
 
-// ── Juster og last ned ────────────────────────────────────────────────────────
+// ── Juster priser ─────────────────────────────────────────────────────────────
 
-adjustBtn.addEventListener("click", async () => {
-  hideStatus();
-
-  if (!osdmFileInput.files[0]) {
-    showStatus(t("adjust_error_no_file"), "error");
-    return;
-  }
-
+function validateAdjustInputs() {
   const pct = parseFloat(adjustPctInput.value);
-  if (isNaN(pct)) {
-    showStatus(t("adjust_error_no_pct"), "error");
-    return;
-  }
-  if (pct === 0) {
-    showStatus(t("adjust_error_pct_zero"), "error");
-    return;
-  }
-
-  if (!deliveryIdInput.value.trim()) {
-    showStatus(t("err_delivery_id"), "error");
-    return;
-  }
-
-  if (!validFromInput.value || !validToInput.value) {
-    showStatus(t("err_valid_dates"), "error");
-    return;
-  }
-
-  if (validFromInput.value > validToInput.value) {
-    showStatus(t("err_date_order"), "error");
-    return;
-  }
-
-  adjustBtn.disabled = true;
-  adjustBtn.textContent = t("adjust_processing");
-  spinnerAdjust.style.display = "block";
-
-  try {
-    const fd = new FormData();
-    fd.append("osdm_file", osdmFileInput.files[0]);
-    fd.append("pct", pct);
-    fd.append("delivery_id", deliveryIdInput.value.trim());
-    fd.append("previous_delivery_id", prevDeliveryInput.value.trim());
-    fd.append("environment", envSelect.value);
-    fd.append("optional_delivery", optDeliverySelect.value);
-    fd.append("valid_from", validFromInput.value);
-    fd.append("valid_to", validToInput.value);
-
-    const r = await fetch("/price-adjust", { method: "POST", body: fd });
-
-    if (!r.ok) {
-      showStatus(t("adjust_error_failed"), "error");
-      return;
-    }
-
-    const blob = await r.blob();
-    const disposition = r.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename="([^"]+)"/);
-    const filename = match ? match[1] : "adjusted.json";
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    showStatus(t("adjust_success"), "success");
-  } catch {
-    showStatus(t("adjust_error_failed"), "error");
-  } finally {
-    adjustBtn.disabled = false;
-    adjustBtn.textContent = t("btn_adjust");
-    spinnerAdjust.style.display = "none";
-  }
-});
-
-// ── Hjelpefunksjoner ──────────────────────────────────────────────────────────
-
-function showStatus(msg, type) {
-  statusMsg.textContent = msg;
-  statusMsg.style.display = "block";
-  if (type === "error") {
-    statusMsg.style.background = "rgba(255,89,89,0.15)";
-    statusMsg.style.borderLeft = "4px solid #ff5959";
-    statusMsg.style.color = "#ff5959";
-  } else {
-    statusMsg.style.background = "rgba(90,195,154,0.12)";
-    statusMsg.style.borderLeft = "4px solid #5ac39a";
-    statusMsg.style.color = "#5ac39a";
-  }
+  const validFrom = document.getElementById("validFrom").value;
+  const validTo = document.getElementById("validTo").value;
+  let msg = "";
+  if (!osdmFileInput.files[0]) msg = t("adjust_error_no_file");
+  else if (isNaN(pct)) msg = t("adjust_error_no_pct");
+  else if (pct === 0) msg = t("adjust_error_pct_zero");
+  else if (!document.getElementById("deliveryId").value.trim()) msg = t("err_delivery_id");
+  else if (!validFrom || !validTo) msg = t("err_valid_dates");
+  else if (validFrom > validTo) msg = t("err_date_order");
+  setValidationError(msg);
+  return !msg;
 }
 
-function hideStatus() {
-  statusMsg.style.display = "none";
+function resetResult() {
+  hideResult();
+  lastAdjustedFile = null;
+  document.getElementById("downloadBtn").disabled = true;
+  document.getElementById("downloadExcelBtn").disabled = true;
+}
+
+adjustBtn.addEventListener("click", async () => {
+  resetResult();
+  if (!validateAdjustInputs()) return;
+
+  adjustBtn.disabled = true;
+  document.getElementById("spinnerAdjust").style.display = "block";
+
+  const fd = new FormData();
+  fd.append("osdm_file", osdmFileInput.files[0]);
+  fd.append("pct", adjustPctInput.value);
+  fd.append("delivery_id", document.getElementById("deliveryId").value.trim());
+  fd.append("previous_delivery_id", document.getElementById("previousDeliveryId").value.trim());
+  fd.append("environment", document.getElementById("environment").value);
+  fd.append("optional_delivery", document.getElementById("optionalDelivery").value);
+  fd.append("valid_from", document.getElementById("validFrom").value);
+  fd.append("valid_to", document.getElementById("validTo").value);
+
+  try {
+    const r = await fetch("/price-adjust", { method: "POST", body: fd });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok || !res.ok) throw new Error();
+
+    lastAdjustedFile = res.outputFile;
+    const factor = res.summary.factor.toFixed(4).replace(/\.?0+$/, "");
+    showResult([
+      t("adjust_success"),
+      ...deliverySummaryLines(res),
+      `${t("label_factor")}: ${factor}`,
+      `${t("label_price_count")}: ${res.summary.faresUpdated}`,
+    ].join("\n"), true);
+    document.getElementById("downloadBtn").disabled = false;
+    document.getElementById("downloadExcelBtn").disabled = false;
+  } catch {
+    showResult(t("adjust_error_failed"), false);
+  } finally {
+    adjustBtn.disabled = false;
+    document.getElementById("spinnerAdjust").style.display = "none";
+  }
+});
+
+function downloadAdjusted() {
+  if (lastAdjustedFile) window.location.href = `/price-adjust/download/${encodeURIComponent(lastAdjustedFile)}`;
+}
+
+function downloadAdjustedExcel() {
+  exportExcel("/price-adjust/excel");
 }

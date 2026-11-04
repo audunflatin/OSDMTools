@@ -3,95 +3,19 @@ let lastGeneratedFile = null;
 function show(id){document.getElementById(id).style.display="block";}
 function hide(id){document.getElementById(id).style.display="none";}
 
-// ── OSDM progress-hjelpere ────────────────────────────────────────────────────
-
-function showOsdmProgress(containerId, pct, stage) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  el.style.display = "";
-  el.querySelector(".progress-fill").style.width = pct + "%";
-  el.querySelector(".progress-pct").textContent = pct + "%";
-  const stageEl = el.querySelector(".progress-stage");
-  if (stageEl) stageEl.textContent = (stage ? t("validate_stage_" + stage) : "") || "";
-}
-
-function hideOsdmProgress(containerId) {
-  const el = document.getElementById(containerId);
-  if (el) el.style.display = "none";
-}
-
-function uploadWithProgress(url, formData, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const startTime = Date.now();
-    let hasRealProgress = false;
-
-    const timer = setInterval(() => {
-      if (!hasRealProgress) {
-        const elapsed = (Date.now() - startTime) / 1000;
-        onProgress(0.48 * (1 - Math.exp(-elapsed / 60)));
-      }
-    }, 500);
-
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable && e.total > 0) {
-        hasRealProgress = true;
-        onProgress(e.loaded / e.total);
-      }
-    };
-    xhr.onload = () => {
-      clearInterval(timer);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
-      } else { reject(new Error(xhr.statusText || `HTTP ${xhr.status}`)); }
-    };
-    xhr.onerror = () => { clearInterval(timer); reject(new Error("Network error")); };
-    xhr.open("POST", url);
-    xhr.send(formData);
-  });
-}
-
-async function pollOsdmJob(jobId, progressEndpoint, containerId, base = 0) {
-  while (true) {
-    await new Promise(r => setTimeout(r, 600));
-    try {
-      const r = await fetch(`${progressEndpoint}/${jobId}`);
-      const data = await r.json();
-      if (data.status === "done") return data.result;
-      if (data.status === "error") return { ok: false, error: data.error };
-      const pct = base + Math.round((data.percent || 0) / 100 * (100 - base));
-      showOsdmProgress(containerId, pct, data.stage || "validating");
-    } catch {
-      return { ok: false, error: t("unknown_error") };
-    }
-  }
-}
-
 function validateGenerateInputs() {
-  const errorEl = document.getElementById("validationError");
-  errorEl.style.display = "none";
-  errorEl.innerText = "";
-
   const datasetId = document.getElementById("datasetId").value.trim();
   const exchangeRate = parseFloat(document.getElementById("exchangeRate").value);
   const validFrom = document.getElementById("validFrom").value;
   const validTo = document.getElementById("validTo").value;
 
-  if (!datasetId) {
-    errorEl.innerText = t("err_delivery_id");
-  } else if (!exchangeRate || exchangeRate <= 0) {
-    errorEl.innerText = t("err_exchange_rate");
-  } else if (!validFrom || !validTo) {
-    errorEl.innerText = t("err_valid_dates");
-  } else if (validFrom > validTo) {
-    errorEl.innerText = t("err_date_order");
-  }
-
-  if (errorEl.innerText) {
-    errorEl.style.display = "block";
-    return false;
-  }
-  return true;
+  let msg = "";
+  if (!datasetId) msg = t("err_delivery_id");
+  else if (!exchangeRate || exchangeRate <= 0) msg = t("err_exchange_rate");
+  else if (!validFrom || !validTo) msg = t("err_valid_dates");
+  else if (validFrom > validTo) msg = t("err_date_order");
+  setValidationError(msg);
+  return !msg;
 }
 
 async function validateTen() {
@@ -146,52 +70,14 @@ async function validateOsdm() {
   const fileInput = document.getElementById("osdmValFile");
   if (!fileInput.files.length) return;
 
-  const file = fileInput.files[0];
-  const maxMb = 5000;
-  const sizeMb = (file.size / 1024 / 1024).toFixed(1);
-  if (file.size > maxMb * 1024 * 1024) {
-    summaryEl.innerHTML = `<pre class="status-error">${t("file_too_large").replace("{size}", sizeMb).replace("{max}", maxMb)}</pre>`;
+  const res = await validateOsdmUpload(fileInput.files[0], "osdmValProgress");
+  if (!res || !res.ok) {
+    summaryEl.innerHTML = renderError(res && res.error);
     return;
   }
 
-  showOsdmProgress("osdmValProgress", 0, "uploading");
-
-  const fd = new FormData();
-  fd.append("osdmFile", fileInput.files[0]);
-
-  const { jobId } = await uploadWithProgress("/ui/validate-osdm", fd, frac =>
-    showOsdmProgress("osdmValProgress", Math.round(frac * 50), "uploading")
-  );
-  const res = await pollOsdmJob(jobId, "/ui/validate-osdm/progress", "osdmValProgress", 50);
-
-  hideOsdmProgress("osdmValProgress");
-
-  if (!res.ok) {
-    summaryEl.innerHTML = `<pre class="status-error">${res.error || t("unknown_error")}</pre>`;
-    return;
-  }
-
-  // OSDM summary
-  summaryEl.innerHTML = `
-    <div class="info-box">
-      <div>
-        <strong>${t("osdm_validated")}</strong>
-        <div class="info-meta">
-          ${t("label_delivery_id")}: <b>${res.deliveryId}</b> &nbsp;·&nbsp;
-          ${t("label_provider")}: <b>${res.fareProvider || "—"}</b> &nbsp;·&nbsp;
-          ${t("label_fare_count_short")}: <b>${res.fareCount.toLocaleString()}</b> &nbsp;·&nbsp;
-          ${t("label_price_count_short")}: <b>${res.priceCount.toLocaleString()}</b> &nbsp;·&nbsp;
-          ${t("label_station_count")}: <b>${res.stationCount}</b>
-        </div>
-      </div>
-    </div>`;
-
-  // Warnings / suggestions
-  if (res.warnings && res.warnings.length > 0) {
-    warningsEl.innerHTML = renderWarnings(res.warnings, t("osdm_warnings_title"), null);
-  } else {
-    warningsEl.innerHTML = `<div class="check-ok">${t("osdm_no_warnings")}</div>`;
-  }
+  summaryEl.innerHTML = renderOsdmSummary(res, { stations: true });
+  warningsEl.innerHTML = renderWarnings(res.warnings, t("osdm_warnings_title"));
 
   // Distance coverage check (run automatically if TEN file is available)
   if (tenFile.files.length) {
@@ -213,7 +99,7 @@ async function validateOsdm() {
           distEl.innerHTML = `<div class="check-ok">${t("distance_ok").replace("{rows}", res2.tenRows).replace("{rc}", res2.osdmRcCount)}</div>`;
         }
       } else if (res2.error) {
-        distEl.innerHTML = `<div style="color:var(--text-muted);font-size:0.82rem;margin-top:0.5rem;">${t("label_distance_check")}: ${res2.error}</div>`;
+        distEl.innerHTML = renderError(`${t("label_distance_check")}: ${res2.error}`);
       }
     } catch {
       hide("spinnerDistances");
@@ -228,18 +114,6 @@ async function validateOsdm() {
   show("generateForm");
   generateBtn.disabled = false;
   fetchExchangeRate();
-}
-
-function renderWarnings(warnings, title, footer) {
-  const items = warnings.map(w => `<li>${w}</li>`).join("");
-  const footerHtml = footer
-    ? `<div class="warnings-note">${footer}</div>`
-    : `<div class="warnings-note">${t("osdm_warnings_note")}</div>`;
-  return `<div class="warnings-box">
-    <div class="warnings-title">⚠ ${title} (${warnings.length})</div>
-    <ul class="warnings-list">${items}</ul>
-    ${footerHtml}
-  </div>`;
 }
 
 function updateExchangeRateLabel() {
@@ -292,94 +166,56 @@ async function fetchExchangeRate() {
   }
 }
 
-async function generateOsdm(){
-  document.getElementById("resultBox").style.display = "none";
-  if(!validateGenerateInputs()) return;
+async function generateOsdm() {
+  hideResult();
+  if (!validateGenerateInputs()) return;
 
+  const generateBtn = document.getElementById("generateBtn");
+  generateBtn.disabled = true;
+  document.getElementById("downloadBtn").disabled = true;
+  document.getElementById("downloadExcelBtn").disabled = true;
   show("spinnerGenerate");
   startProgress();
 
   const fd = new FormData();
-  ["exchangeRate","validFrom","validTo","datasetId","environment","optionalDelivery","previousDeliveryId"]
+  ["exchangeRate", "validFrom", "validTo", "datasetId", "environment", "optionalDelivery", "previousDeliveryId"]
     .forEach(id => fd.append(id, document.getElementById(id).value));
 
-  const r   = await fetch("/ui/generate-osdm", { method: "POST", body: fd });
-  const res = await r.json();
-  hide("spinnerGenerate");
+  try {
+    const r = await fetch("/ui/generate-osdm", { method: "POST", body: fd });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok || !res.ok || !res.outputFile) throw new Error();
 
-  if(res.ok && res.outputFile){
     lastGeneratedFile = res.outputFile;
-
-    const optionalText =
-      document.getElementById("optionalDelivery").value === "true" ? t("yes") : t("no_text");
-    const sommertid = res.summary.utcOffset === 120 ? t("yes") : t("no_text");
-
-    finalStatus.innerText =
-      `${t("osdm_generated")}\n` +
-      `${t("label_file")}: ${res.outputFile}\n` +
-      `${t("label_env")}: ${res.summary.environment}\n` +
-      `${t("label_optional_del")}: ${optionalText}\n` +
-      `${t("label_valid_period")}: ${document.getElementById("validFrom").value} → ${document.getElementById("validTo").value}\n` +
-      `${t("label_summer_time")}: ${sommertid}\n` +
-      `${t("label_price_count")}: ${res.summary.pricesUpdated}`;
-
+    const lines = [
+      t("osdm_generated"),
+      ...deliverySummaryLines(res),
+      `${t("label_price_count")}: ${res.summary.pricesUpdated}`,
+    ];
     // Relasjoner avstandsfilen ikke dekker beholder malens gamle priser
     if (res.summary.rcsSkipped > 0) {
-      finalStatus.innerText +=
-        `\n\n⚠ ${t("rcs_skipped_warning").replace("{count}", res.summary.rcsSkipped)}\n` +
-        res.summary.rcsSkippedExamples.map(e => `  • ${e}`).join("\n") +
-        (res.summary.rcsSkipped > res.summary.rcsSkippedExamples.length
-          ? `\n  • ${t("and_n_more").replace("{n}", res.summary.rcsSkipped - res.summary.rcsSkippedExamples.length)}`
-          : "");
+      const more = res.summary.rcsSkipped - res.summary.rcsSkippedExamples.length;
+      lines.push("", `⚠ ${t("rcs_skipped_warning").replace("{count}", res.summary.rcsSkipped)}`,
+        ...res.summary.rcsSkippedExamples.map(e => `  • ${e}`),
+        ...(more > 0 ? [`  • ${t("and_n_more").replace("{n}", more)}`] : []));
     }
-
-    finalStatus.className = "result-text";
-    document.getElementById("resultBox").style.display = "block";
-    downloadBtn.disabled = false;
+    showResult(lines.join("\n"), true);
+    document.getElementById("downloadBtn").disabled = false;
     document.getElementById("downloadExcelBtn").disabled = false;
-  } else {
-    finalStatus.className = "result-text status-error";
-    finalStatus.innerText = t("err_osdm_failed");
-    document.getElementById("resultBox").style.display = "block";
-  }
-}
-
-function downloadOsdm(){
-  window.location.href = `/ui/download-osdm/${lastGeneratedFile}`;
-}
-
-async function downloadAsExcel() {
-  const btn = document.getElementById("downloadExcelBtn");
-  btn.disabled = true;
-  show("spinnerExcel");
-
-  try {
-    const r   = await fetch("/ui/excel-from-generated", { method: "POST" });
-    const res = await r.json();
-    if (!res.jobId) throw new Error();
-    await _pollExcelJob(res.jobId);
   } catch {
-    hide("spinnerExcel");
-    btn.disabled = false;
+    showResult(t("err_osdm_failed"), false);
+  } finally {
+    hide("spinnerGenerate");
+    generateBtn.disabled = false;
   }
 }
 
-async function _pollExcelJob(jobId) {
-  while (true) {
-    await new Promise(r => setTimeout(r, 800));
-    const res = await (await fetch(`/frontend/osdm-to-csv-status/${jobId}`)).json();
-    if (res.status === "done") {
-      hide("spinnerExcel");
-      document.getElementById("downloadExcelBtn").disabled = false;
-      window.location.href = `/frontend/osdm-to-csv-download/${jobId}`;
-      return;
-    }
-    if (res.status === "error") {
-      hide("spinnerExcel");
-      document.getElementById("downloadExcelBtn").disabled = false;
-      return;
-    }
-  }
+function downloadOsdm() {
+  if (lastGeneratedFile) window.location.href = `/ui/download-osdm/${encodeURIComponent(lastGeneratedFile)}`;
+}
+
+function downloadAsExcel() {
+  exportExcel("/ui/excel-from-generated");
 }
 
 function startProgress(){
@@ -394,27 +230,8 @@ function startProgress(){
 
 
 
-if (window.IS_ADMIN) {
-  const adminLink = document.getElementById("adminLink");
-  if (adminLink) adminLink.style.display = "";
-  const adminSubmenu = document.getElementById("adminSubmenu");
-  if (adminSubmenu) adminSubmenu.style.display = "flex";
-}
-
-["datasetId", "exchangeRate"].forEach(id => {
-  document.getElementById(id).addEventListener("input", () => {
-    const errorEl = document.getElementById("validationError");
-    errorEl.style.display = "none";
-    errorEl.innerText = "";
-  });
-});
-
-["validFrom", "validTo"].forEach(id => {
-  document.getElementById(id).addEventListener("change", () => {
-    const errorEl = document.getElementById("validationError");
-    errorEl.style.display = "none";
-    errorEl.innerText = "";
-  });
+["datasetId", "exchangeRate", "validFrom", "validTo"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => setValidationError(""));
 });
 
 // Oppdater valutakurs-etikett ved språkbytte
