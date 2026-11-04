@@ -1,6 +1,6 @@
-# PopToOSDM
+# OSDMTools
 
-PopToOSDM er et internverktøy for å generere og redigere OSDM `fareDelivery`‑filer basert på TEN‑avstandsfiler og brukeropplastede OSDM-maler.
+OSDMTools er et internverktøy for å generere og redigere OSDM `fareDelivery`‑filer basert på TEN‑avstandsfiler og brukeropplastede OSDM-maler.
 
 
 Produksjonsdomene: **https://osdmtools.com**

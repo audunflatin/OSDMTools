@@ -1,13 +1,13 @@
-# PopToOSDM – Kontekst og løsningsbeskrivelse
+# OSDMTools – Kontekst og løsningsbeskrivelse
 
-Dette dokumentet beskriver status, arkitektur og valg i PopToOSDM-løsningen.
+Dette dokumentet beskriver status, arkitektur og valg i OSDMTools-løsningen.
 Det er ment som kontekst for videre arbeid, feilsøking eller videreutvikling.
 
 ---
 
 ## Overordnet formål
 
-PopToOSDM er et GUI-basert verktøy for europeiske jernbaneoperatører for å generere
+OSDMTools er et GUI-basert verktøy for europeiske jernbaneoperatører for å generere
 og håndtere OSDM fareDelivery-filer basert på:
 
 - TEN-avstander (regionalConstraints.distance)

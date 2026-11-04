@@ -1,6 +1,6 @@
-# CLAUDE.md – PopToOSDM
+# CLAUDE.md – OSDMTools
 
-Rask referanse for Claude. Detaljert arkitektur og kontekst: `CONTEXT_PopToOSDM.md`.
+Rask referanse for Claude. Detaljert arkitektur og kontekst: `CONTEXT_OSDMTools.md`.
 
 ---
 
@@ -402,6 +402,7 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 
 ## Kjente fallgruver
 
+- **localStorage-nøklene heter fortsatt `poptoosdm_lang` / `poptoosdm_theme`** (prosjektet het PopToOSDM til nov. 2026). Ikke gi dem nytt navn — da mister brukerne språk- og temavalget.
 - **`TEN_STORE` er tom etter serverrestart** — brukeren må validere TEN-filen på nytt. Tilsvarende for `INPUT_OSDM_STORE`. Dette er by design (stateless storage mellom requests, men state lever i server-prosessen).
 - **`import requests` var lenge glemt** i `main.py` (lagt til mai 2026). Valutahenting feilet stille.
 - **Priser rundes opp til nærmeste 0,20 EUR** — DRTF-krav. **Bruk alltid `osdm_editor.round_up_020()`**, aldri `math.ceil(eur / 0.20) * 0.20`: flyttall gjør at f.eks. 12.600000000000001 rundes til 12,80.

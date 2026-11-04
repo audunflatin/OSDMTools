@@ -1,4 +1,4 @@
-# Kartlegging av PopToOSDM – november 2026
+# Kartlegging av OSDMTools – november 2026
 
 Gjennomgang av backend, prislogikk, sikkerhet og frontend, gjort 4. november 2026.
 

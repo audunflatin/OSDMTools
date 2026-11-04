@@ -1,6 +1,6 @@
-# Sammendrag – PopToOSDM‑løsningen
+# Sammendrag – OSDMTools‑løsningen
 
-PopToOSDM er en komplett løsning for å generere **OSDM fareDelivery‑filer**
+OSDMTools er en komplett løsning for å generere **OSDM fareDelivery‑filer**
 basert på **TEN‑avstander** og **TEN‑priser**.
 
 Løsningen er utviklet for å være korrekt i henhold til **OSDM‑spesifikasjonen**
