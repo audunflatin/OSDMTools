@@ -301,3 +301,59 @@ def test_generate_reports_relations_not_covered_by_distance_file():
     assert summary["rcsSkipped"] > 0
     assert 0 < len(summary["rcsSkippedExamples"]) <= 5
     assert "km)" in summary["rcsSkippedExamples"][0]
+
+
+def test_forgot_password_is_rate_limited():
+    """M4: «glemt passord» skal ikke kunne brukes til å bombe noen med e-post."""
+    main._forgot_requests.clear()
+    client = TestClient(main.app)
+    for _ in range(5):
+        assert client.post("/forgot-password", data={"email": "finnes.ikke@test.no"}).status_code == 200
+    assert client.post("/forgot-password", data={"email": "finnes.ikke@test.no"}).status_code == 429
+
+
+def test_editor_metadata_writes_valid_calendar_dates():
+    """M7: datoer fra editoren skal få samme format og utcOffset som generering."""
+    import json
+    from conftest import TEMPLATE_1076
+    client = _login("a@test.no")
+    r = client.post("/osdm-editor/load", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())})
+    assert r.status_code == 200
+    assert len(r.json()["validity"]["from_date"]) == 10  # YYYY-MM-DD for <input type="date">
+
+    client.post("/osdm-editor/metadata", json={"valid_from": "2027-01-10", "valid_until": "2027-06-30"})
+    out = json.loads(client.get("/osdm-editor/download").content)
+    cal = out["fareDelivery"]["fareStructure"]["calendars"][0]
+    assert cal["fromDate"] == "2027-01-10T00:00:00+0000"
+    assert cal["untilDate"] == "2027-06-30T23:59:59+0000"
+    assert cal["utcOffset"] == 60  # vintertid i Oslo
+
+
+def test_price_adjust_uses_exact_ratios_and_leaves_no_unused_prices():
+    """M1: +5 % → voksen skaleres per relasjon, øvrige fra eksakte ratioer, ingen ubrukte priser."""
+    import json
+    from collections import defaultdict
+    from conftest import TEMPLATE_1076
+    from backend.osdm_editor import round_up_020
+
+    def per_rc(data):
+        fs = data["fareDelivery"]["fareStructure"]
+        prices = {p["id"]: p["price"][0]["amount"] / 100 for p in fs["prices"]}
+        out = defaultdict(lambda: defaultdict(list))
+        for f in fs["fares"]:
+            out[f["regionalConstraintRef"].split("_", 2)[2]][f["passengerConstraintRef"].split("_", 2)[2]].append(prices[f["priceRef"]])
+        return out, fs
+
+    before, _ = per_rc(json.loads(TEMPLATE_1076.read_bytes()))
+    after, fs = per_rc(_price_adjust(_login("a@test.no"), 5, delivery_id="7.1"))
+
+    for rc, pcs in before.items():
+        new_adult = round_up_020(max(pcs["G__1"]) * 1.05)
+        assert max(after[rc]["G__1"]) == new_adult
+        assert max(after[rc]["G__3"]) == round_up_020(new_adult * 0.25)
+        assert max(after[rc]["G__5"]) == round_up_020(new_adult * 0.5)
+        assert max(after[rc]["G__2"]) == round_up_020(new_adult * 0.9)
+
+    used = {f["priceRef"] for f in fs["fares"]}
+    assert {p["id"] for p in fs["prices"]} == used
+    assert all("legacyAccountingIdentifier" in f for f in fs["fares"])

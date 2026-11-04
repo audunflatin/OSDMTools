@@ -122,3 +122,26 @@ def test_new_adult_price_sets_categories_and_scales_fip(template_bytes):
 
     adult_fares = new[(next(iter(old))[0], entry["adult_id"])]
     assert max(adult_fares) == new_adult
+
+
+def test_category_prices_use_published_adult_price(template_bytes):
+    """Kategoripris = ratio × den publiserte (avrundede) voksenprisen. Med urundet
+    voksenpris drev ratioene ved ny utledning (f.eks. gruppevoksen 0,9003 ved ×1,05)."""
+    entry = oe.load_osdm(template_bytes)
+    adult_id = entry["adult_id"]
+    unrounded = {rc: price * 1.05 for rc, price in _adult_price_per_rc(entry).items()}
+    oe.set_prices_from_adult(entry, unrounded)
+
+    fs = entry["data"]["fareDelivery"]["fareStructure"]
+    pm = entry["price_map"]
+    primary: dict[tuple, float] = {}
+    for f in fs["fares"]:
+        key = (f["regionalConstraintRef"], f["passengerConstraintRef"])
+        primary[key] = max(primary.get(key, 0.0), pm[f["priceRef"]])
+    for (rc, pc), price in primary.items():
+        adult = oe.round_up_020(unrounded[rc])
+        ratio = entry["ratios"][pc]
+        assert price == (adult if pc == adult_id else oe.round_up_020(adult * ratio)), (rc, pc)
+
+    entry2 = oe.load_osdm(oe.serialize_osdm(entry))
+    assert entry2["ratios"] == entry["ratios"]

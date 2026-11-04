@@ -100,9 +100,9 @@ En bakgrunnstråd rydder alle stores eldre enn 2 timer hvert 10. minutt (`XLSX_J
 | `POST /price-adjust` | Mottar OSDM-fil + %, beregner nye priser, oppdaterer delivery-felt, returnerer justert fil |
 
 Parametere: `osdm_file`, `pct`, `delivery_id`, `previous_delivery_id`, `environment`, `optional_delivery`, `valid_from`, `valid_to`.
-Algoritme: grupper fares etter (RC, carrier, bundle) → maks = voksen → skaler med `1 + pct/100` → rund opp til 0,20 EUR → beregn øvrige kategorier fra ratio. Merk: alle farer i en gruppe (inkl. FIP-varianter) skaleres proporsjonalt fra maks-prisen.
+Algoritme (november 2026): samme kode som generering — `osdm_editor.scale_prices()`. Ny voksenpris = gammel voksenpris × `(1 + pct/100)` per (RC, carrier, klasse), rundet opp; øvrige kategorier = avrundet voksenpris × eksakt ratio; FIP o.l. proporsjonalt med primærfaren. Grupper uten voksenfare skaleres direkte. Delivery-felt og ID-prefix settes med `_apply_delivery_fields` / `_serialize_with_new_prefix`, felles med generering. Leser hele filen inn i minnet (se fallgruver).
 
-**Kjent feil (rettet juni 2026):** Når `delivery_id` endres, ble byte-level ID-replace gjort på rå-filen (alle fare-priceRef-er fikk ny ID), men `prices`-listen i Python ble serialisert med **gamle** ID-er → brutte referanser i output. Nå synkroniseres `price["id"]` i Python-listen etter byte-replace, før `json.dumps`.
+Tidligere grupperte prisregulering på `fareConstraintBundleRef` (feltet heter `bundleRef`) og endret priser på stedet — priser delt mellom relasjoner med ulik voksenpris fikk verdien fra siste relasjon.
 
 ---
 
@@ -207,7 +207,12 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 - `id_prefix` — f.eks. `"1076_7.0_"` eller `"0083_3.1_"`
 - `fare_templates` — liste over fare-strukturer for `add_relation`
 
-### `osdm_editor.set_prices_from_adult(store_entry, rc_adult_prices: dict[str, float])` — brukes av generate_osdm:
+### `osdm_editor.set_prices_from_adult(store_entry, rc_adult_prices)` og `scale_prices(store_entry, factor)`
+Begge går via `_apply_adult_prices` (generering bruker den første, prisregulering den andre):
+- **Kategoripriser = ratio × den avrundede voksenprisen** — samme grunnlag som `_infer_ratio` utleder fra. Bruker man urundet voksenpris, driver ratioene ved neste generering (f.eks. 0,9003).
+- Priser som blir ubrukt etter endringen fjernes (priser som var ubrukt fra før røres ikke).
+
+Detaljer for `set_prices_from_adult`:
 - Tar `{rc_id: adult_eur}` og setter priser for alle PC × SC-kombinasjoner
 - Håndterer filer med **duplikat-farer per (RC, carrier, sc, PC)** — se avsnittet nedenfor
 - Runder opp til nærmeste 0,20 EUR (DRTF-krav)
@@ -338,7 +343,7 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 - **Job-cleanup**: bakgrunnstråd sletter jobber eldre enn 2 timer hvert 10. minutt.
 - **`_safe_filename()`**: fjerner tegn som kan ødelegge `Content-Disposition`-headere. Brukes i `fix_osdm`, `price_adjust` og `osdm-to-csv-download`.
 - **`OSDM_STORE`**: per-bruker dict — to brukere kan generere OSDM samtidig uten å overskrive hverandres resultat.
-- **Rate limiting**: 10 innloggingsforsøk per IP per 60 sek; 3 tilgangsforespørsler per IP per 24 t; 5 kontaktmeldinger per bruker per time (`/contact` krever innlogging).
+- **Rate limiting**: 10 innloggingsforsøk per IP per 60 sek; 3 tilgangsforespørsler per IP per 24 t; 5 «glemt passord» per IP per time; 5 kontaktmeldinger per bruker per time (`/contact` krever innlogging). Felles hjelper: `_rate_limit(store, nøkkel, vindu, maks)`.
 - **SameSite=strict** på session-cookie; `CF-Connecting-IP` for korrekt IP bak Cloudflare.
 
 ---
@@ -354,4 +359,7 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 - **Ikke fjern legacy-felt fra farer** (`legacyAccountingIdentifier`, `legacyConversion`, `individualContracts`). OSDM-tool (brukt av bl.a. SilverRail) trenger `serialId` (serienummer) og `legacyConversion: "YES"` for å konvertere til 108.1 — uten dem importeres ingen farer. Ble fjernet ved malopp-rydding mai 2026 og gjenopprettet oktober 2026.
 - **price-adjust: ID-mismatch ved ny delivery_id** — se avsnittet om prisregulering ovenfor.
 - **`ijson` returnerer Python `int` for heltall i JSON** (ikke `Decimal`). `Decimal` oppstår kun for desimaltall. I fix_osdm brukes ijson til full parse → `default=_ijson_default` i json.dumps håndterer eventuelle Decimal-verdier. I price-adjust og andre steder brukes ijson kun for streaming, og tallverdier er typisk heltall.
+- **Én instans, hele filen i minnet for noen tjenester.** All tilstand (jobber, opplastede filer) ligger i prosessens minne — appen må kjøre som **én** instans med **én** worker. Generering, prisregulering og OSDM-editoren gjør `json.loads` på hele filen (~10× filstørrelse i RAM): greit for operatørfiler (1076 ≈ 10 MB), ikke for DB-filer på 1,2 GB. Validering, Excel-eksport, «Rydd opp» og fare-discount strømmer med `ijson` og tåler store filer.
+- **Kalenderdatoer** settes alltid med `osdm_editor.set_calendar_validity()` (lokal dato + `+0000`, `utcOffset` for Oslo). Editoren får/sender `YYYY-MM-DD`.
+- **Priser i flere valutaer**: bruk `osdm_editor.eur_entry()` / `_get_price_eur()`, aldri `price[0]`.
 - **Sidebar span-arving** — koblingene som pakker tekst i `<span>` (OSDM-editor med BETA-tag, Brukere med pending-badge) arvet ikke `--text-muted` korrekt fra parent-`<a>` i mørk modus. Løst med eksplisitte `.sidebar-link span:not(.beta-tag)` farger i `styles.css`.

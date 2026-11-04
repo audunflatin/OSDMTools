@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 from collections import defaultdict
 import time
 
-from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
 
 # ---------------------------------------------------------------------
@@ -139,16 +138,19 @@ def _rate_limit_check(ip: str):
 def _rate_limit_reset(ip: str):
     _login_attempts.pop(ip, None)
 
-_access_requests: dict[str, list[float]] = defaultdict(list)
-_ACCESS_WINDOW = 86400  # 24 timer
-_ACCESS_MAX    = 3      # maks forespørsler per dag per IP
-
-def _check_access_rate_limit(ip: str):
+def _rate_limit(store: dict[str, list[float]], key: str, window: int, max_count: int) -> None:
+    """Glidende vindu: maks `max_count` hendelser per `window` sekunder per nøkkel."""
     now = time.time()
-    _access_requests[ip] = [t for t in _access_requests[ip] if now - t < _ACCESS_WINDOW]
-    if len(_access_requests[ip]) >= _ACCESS_MAX:
+    store[key] = [t for t in store[key] if now - t < window]
+    if len(store[key]) >= max_count:
         raise HTTPException(status_code=429, detail="rate_limited")
-    _access_requests[ip].append(now)
+    store[key].append(now)
+
+
+_access_requests: dict[str, list[float]] = defaultdict(list)   # 3 per IP per døgn
+_forgot_requests: dict[str, list[float]] = defaultdict(list)   # 5 per IP per time
+_contact_sent:    dict[str, list[float]] = defaultdict(list)   # 5 per bruker per time
+_CONTACT_MAX = 5
 
 # ---------------------------------------------------------------------
 # State
@@ -415,8 +417,9 @@ def forgot_password_page():
     return HTMLResponse(Path("frontend/forgot_password.html").read_text(encoding="utf-8"))
 
 @app.post("/forgot-password")
-def forgot_password(email: str = Form(...)):
-    email = email.lower()
+def forgot_password(request: Request, email: str = Form(...)):
+    _rate_limit(_forgot_requests, _get_client_ip(request), 3600, 5)
+    email = email.strip().lower()
     from backend.core.settings import APP_URL as _APP_URL
     db = SessionLocal()
     try:
@@ -974,6 +977,37 @@ def nok_price_from_distance(ten_table: list, km: int):
 # Generate OSDM
 # ---------------------------------------------------------------------
 
+def _apply_delivery_fields(
+    store_entry: dict, delivery_id: str, previous_delivery_id: str,
+    optional_delivery: str, environment: str, valid_from: str, valid_to: str,
+) -> int:
+    """Sett delivery-felt og gyldighetsperiode. Felles for generering og prisregulering.
+    Returnerer utcOffset for fra-datoen."""
+    data = store_entry["data"]
+    delivery = data["fareDelivery"]["delivery"]
+    delivery["deliveryId"] = delivery_id
+    if previous_delivery_id.strip():
+        delivery["previousDeliveryId"] = previous_delivery_id.strip()
+    else:
+        delivery.pop("previousDeliveryId", None)
+    delivery["optionalDelivery"] = (optional_delivery.lower() == "true")
+    delivery["usage"] = "TEST_ONLY" if environment == "test" else "PRODUCTION"
+    calendars = data["fareDelivery"]["fareStructure"].get("calendars", [])
+    return osdm_editor.set_calendar_validity(calendars, valid_from, valid_to)
+
+
+def _serialize_with_new_prefix(store_entry: dict, delivery_id: str) -> tuple[str, str]:
+    """Serialiser og bytt ID-prefix ({fareProvider}_{deliveryId}_) overalt.
+    Returnerer (json-tekst, fare_provider)."""
+    old_prefix = store_entry["id_prefix"]
+    fare_provider = old_prefix.split("_")[0]
+    new_prefix = f"{fare_provider}_{delivery_id}_"
+    content = json.dumps(store_entry["data"], indent=2, ensure_ascii=False)
+    if old_prefix and old_prefix != new_prefix:
+        content = content.replace(old_prefix, new_prefix)
+    return content, fare_provider
+
+
 @app.post("/ui/generate-osdm")
 def generate_osdm(
     request: Request,
@@ -1019,27 +1053,9 @@ def _generate_osdm(
     data = store_entry["data"]
     fs = data["fareDelivery"]["fareStructure"]
 
-    # Update delivery metadata
-    data["fareDelivery"]["delivery"]["deliveryId"] = datasetId
-    if previousDeliveryId.strip():
-        data["fareDelivery"]["delivery"]["previousDeliveryId"] = previousDeliveryId.strip()
-    else:
-        data["fareDelivery"]["delivery"].pop("previousDeliveryId", None)
-    data["fareDelivery"]["delivery"]["optionalDelivery"] = (optionalDelivery.lower() == "true")
-    data["fareDelivery"]["delivery"]["usage"] = (
-        "TEST_ONLY" if environment == "test" else "PRODUCTION"
+    utc_offset_from = _apply_delivery_fields(
+        store_entry, datasetId, previousDeliveryId, optionalDelivery, environment, validFrom, validTo,
     )
-
-    # Update calendars (Oslo timezone)
-    oslo_tz = ZoneInfo("Europe/Oslo")
-    from_dt = datetime.fromisoformat(validFrom).replace(tzinfo=oslo_tz)
-    utc_offset_from = int(from_dt.utcoffset().total_seconds() / 60)
-    from_date = f"{validFrom}T00:00:00+0000"
-    until_date = f"{validTo}T23:59:59+0000"
-    for cal in fs.get("calendars", []):
-        cal["fromDate"] = from_date
-        cal["untilDate"] = until_date
-        cal["utcOffset"] = utc_offset_from
 
     # Compute adult price in EUR for each RC from TEN table + exchange rate
     rcs = fs.get("regionalConstraints", [])
@@ -1090,13 +1106,7 @@ def _generate_osdm(
         )
         example_idx += 1
 
-    # Replace id-prefix in all IDs (string-replace on serialised JSON)
-    old_prefix = store_entry["id_prefix"]
-    fare_provider = old_prefix.split("_")[0]
-    new_prefix = f"{fare_provider}_{datasetId}_"
-    content = json.dumps(store_entry["data"], indent=2, ensure_ascii=False)
-    if old_prefix != new_prefix:
-        content = content.replace(old_prefix, new_prefix)
+    content, fare_provider = _serialize_with_new_prefix(store_entry, datasetId)
 
     progress["status"] = "done"
     progress["percent"] = 100
@@ -1458,8 +1468,9 @@ def osdm_to_xlsx_bytes(file_bytes: bytes, job_id: str = None, jobs: dict = None)
 
     price_map: dict[str, int] = {}
     for p in ijson.items(_s(), "fareDelivery.fareStructure.prices.item"):
-        if p.get("price"):
-            price_map[p["id"]] = p["price"][0]["amount"]
+        entry = osdm_editor.eur_entry(p)
+        if entry:
+            price_map[p["id"]] = round(entry["amount"] / (10 ** entry.get("scale", 2)) * 100)
 
     station_map: dict[str, str] = {}
     for sn in ijson.items(_s(), "fareDelivery.fareStructure.stationNames.item"):
@@ -2079,11 +2090,6 @@ def delete_account(request: Request):
     request.session.clear()
     return {"ok": True}
 
-_contact_sent: dict[str, list[float]] = defaultdict(list)
-_CONTACT_WINDOW = 3600  # 1 time
-_CONTACT_MAX    = 5     # maks meldinger per time per bruker
-
-
 @app.post("/contact")
 def contact(
     request: Request,
@@ -2093,14 +2099,10 @@ def contact(
 ):
     require_login(request)
     user_email = request.session["user_email"]
-    now = time.time()
-    _contact_sent[user_email] = [t for t in _contact_sent[user_email] if now - t < _CONTACT_WINDOW]
-    if len(_contact_sent[user_email]) >= _CONTACT_MAX:
-        raise HTTPException(status_code=429, detail="rate_limited")
     name, email, message = name.strip()[:200], email.strip()[:254], message.strip()[:5000]
     if not message:
         raise HTTPException(status_code=400, detail="Meldingen er tom")
-    _contact_sent[user_email].append(now)
+    _rate_limit(_contact_sent, user_email, 3600, _CONTACT_MAX)
     try:
         send_contact_email(name, email, message)
         log_event(email, "contact_sent", detail={"name": name})
@@ -2122,7 +2124,7 @@ def request_access(
     if website:
         return {"ok": True}
     ip = _get_client_ip(request)
-    _check_access_rate_limit(ip)
+    _rate_limit(_access_requests, ip, 86400, 3)
     email_clean      = email.strip().lower()
     if not _valid_email(email_clean):
         raise HTTPException(status_code=400, detail="invalid_email")
@@ -2189,136 +2191,40 @@ def price_adjust(
 ):
     require_login(request)
     factor = 1 + pct / 100
+    if factor <= 0:
+        raise HTTPException(status_code=400, detail="Ugyldig prosent")
 
     try:
         content = osdm_file.file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
 
-    # Quick structure check
-    has_fs = False
+    # Samme prislogikk som generering: ny voksenpris per (RC, carrier, klasse),
+    # øvrige kategorier fra eksakte ratioer, FIP o.l. proporsjonalt.
     try:
-        for prefix, event, _ in ijson.parse(io.BytesIO(content)):
-            if prefix == "fareDelivery.fareStructure" and event == "start_map":
-                has_fs = True
-                break
-    except Exception:
-        raise HTTPException(status_code=400, detail="Filen er ikke gyldig JSON")
-    if not has_fs:
-        raise HTTPException(status_code=400, detail="Mangler fareDelivery.fareStructure")
-
-    # Load prices list via ijson
-    prices: list = list(ijson.items(io.BytesIO(content), "fareDelivery.fareStructure.prices.item"))
-    if not prices:
+        store_entry = osdm_editor.load_osdm(content)
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Filen er ikke en gyldig OSDM fareDelivery")
+    if not store_entry["data"]["fareDelivery"]["fareStructure"].get("prices"):
         raise HTTPException(status_code=400, detail="Mangler felt i OSDM-strukturen: 'prices'")
 
-    # Indeks: price_id → list-posisjon
-    price_idx = {p["id"]: i for i, p in enumerate(prices)}
+    result = osdm_editor.scale_prices(store_entry, factor)
+    _apply_delivery_fields(
+        store_entry, delivery_id, previous_delivery_id, optional_delivery, environment, valid_from, valid_to,
+    )
+    result_text, fare_provider = _serialize_with_new_prefix(store_entry, delivery_id)
 
-    def get_eur(price_id: str) -> float:
-        p = prices[price_idx[price_id]]
-        entry = p["price"][0]
-        scale = entry.get("scale", 2)
-        return entry["amount"] / (10 ** scale)
-
-    # Grupper farer etter (RC, carrier, bundle) → finn voksenpris per gruppe
-    groups: dict[tuple, list] = defaultdict(list)
-    for fare in ijson.items(io.BytesIO(content), "fareDelivery.fareStructure.fares.item"):
-        key = (
-            fare.get("regionalConstraintRef"),
-            fare.get("carrierConstraintRef"),
-            fare.get("fareConstraintBundleRef"),
-        )
-        price_ref = fare.get("priceRef")
-        if key[0] and price_ref and price_ref in price_idx:
-            groups[key].append((price_ref, get_eur(price_ref)))
-
-    # Beregn nye priser i EUR, lagre som {price_id: ny_eur}
-    new_eur_amounts: dict[str, float] = {}
-    for group_fares in groups.values():
-        if not group_fares:
-            continue
-        max_eur = max(eur for _, eur in group_fares)
-        if max_eur <= 0:
-            continue
-        new_adult_eur = osdm_editor.round_up_020(max_eur * factor)
-        for price_ref, eur in group_fares:
-            if eur <= 0:
-                new_eur_amounts[price_ref] = 0.0
-            elif eur == max_eur:
-                new_eur_amounts[price_ref] = new_adult_eur
-            else:
-                ratio = eur / max_eur
-                new_eur_amounts[price_ref] = osdm_editor.round_up_020(new_adult_eur * ratio)
-
-    # Oppdater prices-lista (skriver tilbake som skalert heltall)
-    for price in prices:
-        if price["id"] in new_eur_amounts:
-            entry = price["price"][0]
-            scale = entry.get("scale", 2)
-            entry["amount"] = int(round(new_eur_amounts[price["id"]] * (10 ** scale)))
-
-    # Load delivery and calendars via ijson
-    delivery: dict = {}
-    for item in ijson.items(io.BytesIO(content), "fareDelivery.delivery"):
-        delivery = item
-        break
-    calendars: list = list(ijson.items(io.BytesIO(content), "fareDelivery.fareStructure.calendars.item"))
-
-    old_id = delivery.get("deliveryId", "")
-
-    # Oppdater delivery-felt
-    delivery["deliveryId"] = delivery_id
-    if previous_delivery_id.strip():
-        delivery["previousDeliveryId"] = previous_delivery_id.strip()
-    else:
-        delivery.pop("previousDeliveryId", None)
-    delivery["optionalDelivery"] = (optional_delivery.lower() == "true")
-    delivery["usage"] = "TEST_ONLY" if environment == "test" else "PRODUCTION"
-
-    oslo_tz = ZoneInfo("Europe/Oslo")
-    from_dt = datetime.fromisoformat(valid_from).replace(tzinfo=oslo_tz)
-    utc_offset = int(from_dt.utcoffset().total_seconds() / 60)
-    from_date = f"{valid_from}T00:00:00+0000"
-    until_date = f"{valid_to}T23:59:59+0000"
-    for cal in calendars:
-        cal["fromDate"] = from_date
-        cal["untilDate"] = until_date
-        cal["utcOffset"] = utc_offset
-
-    # If deliveryId changed, do byte-level string-replace first (fares, RCs, CPs, etc.)
-    # Sync price IDs i Python-lista ETTER at new_eur_amounts er brukt (bruker gamle IDer),
-    # MEN FØR json.dumps — ellers får fares nye IDer mens prices beholder gamle.
-    if old_id and old_id != delivery_id:
-        content = content.replace(f"_{old_id}_".encode(), f"_{delivery_id}_".encode())
-        for price in prices:
-            price["id"] = price["id"].replace(f"_{old_id}_", f"_{delivery_id}_")
-
-    # Find byte spans and replace sections
-    try:
-        delivery_span = _find_section_span(content, "delivery")
-        prices_span   = _find_section_span(content, "prices")
-        calendars_span = _find_section_span(content, "calendars")
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=f"Mangler felt i OSDM-strukturen: {e}")
-
-    result_bytes = _apply_byte_replacements(content, [
-        (delivery_span[0],  delivery_span[1],  json.dumps(delivery,  ensure_ascii=False).encode("utf-8")),
-        (prices_span[0],    prices_span[1],    json.dumps(prices,    ensure_ascii=False).encode("utf-8")),
-        (calendars_span[0], calendars_span[1], json.dumps(calendars, ensure_ascii=False).encode("utf-8")),
-    ])
-
-    fare_provider = delivery.get("fareProvider", "")
     env_suffix = "test" if environment == "test" else "prod"
     filename = _safe_filename(f"{fare_provider}_{delivery_id}_{env_suffix}.json")
 
     log_event(
         request.session.get("user_email"), "price_adjust",
-        detail={"factor": factor, "filename": osdm_file.filename, "prices_updated": len(new_eur_amounts), "delivery_id": delivery_id},
+        detail={"factor": factor, "filename": osdm_file.filename, "fares_updated": result["updated_fares"],
+                "delivery_id": delivery_id},
     )
 
     return Response(
-        content=result_bytes,
+        content=result_text.encode("utf-8"),
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -2640,7 +2546,7 @@ def fare_discount_apply(
 
     # Prisoppslag: priceId → første price-element
     price_lookup: dict[str, dict] = {
-        p["id"]: p["price"][0] for p in prices_list if p.get("price")
+        p["id"]: e for p in prices_list if (e := osdm_editor.eur_entry(p))
     }
 
     multiplier = 1 - discountPct / 100

@@ -2,7 +2,7 @@
 
 Gjennomgang av backend, prislogikk, sikkerhet og frontend, gjort 4. november 2026.
 
-**Status:** Alle kritiske og høye funn (K1–K3, H1–H5), samt M3 og S1 (tester), er rettet 4. november 2026. Resten er åpent.
+**Status:** Alle kritiske, høye og middels funn (K1–K3, H1–H5, M1–M8) samt S1 (tester) er rettet eller dokumentert 4. november 2026. Struktur (S2–S10) og UX (U1–U6) gjenstår.
 
 Hvert funn har en ID (K = kritisk, H = høy, M = middels, S = struktur, U = UX/GUI) slik at vi kan vise til dem når vi tar dem.
 
@@ -104,14 +104,14 @@ Med begge feilene rettet endres **0** farer.
 
 | ID | Hvor | Funn | Forslag |
 |---|---|---|---|
-| M1 | `price_adjust` | Grupperer på `fareConstraintBundleRef`, men feltet heter `bundleRef`. Grupperingen blir derfor bare (relasjon, transportør). Priser som deles mellom grupper skrives over av den siste gruppen. | Skaler hver pris direkte: `ny = rund_opp(gammel × faktor)` |
-| M2 | `price_adjust`, Excel-eksport, fare-discount | Bruker `price[0]` uten å sjekke at valutaen er EUR | Velg EUR-oppføringen eksplisitt, som `osdm_editor._get_price_eur` gjør |
+| M1 ✅ | `price_adjust` | Grupperer på `fareConstraintBundleRef`, men feltet heter `bundleRef`. Grupperingen blir derfor bare (relasjon, transportør). Priser som deles mellom grupper skrives over av den siste gruppen. | Skaler hver pris direkte: `ny = rund_opp(gammel × faktor)` |
+| M2 ✅ | `price_adjust`, Excel-eksport, fare-discount | Bruker `price[0]` uten å sjekke at valutaen er EUR | Velg EUR-oppføringen eksplisitt, som `osdm_editor._get_price_eur` gjør |
 | M3 ✅ | `fare_discount_apply` | Bruker den *første* faren per (relasjon, kategori, klasse) som grunnlag. I 1076 er det tilfeldigvis primærfaren, men med en annen rekkefølge blir rabatten beregnet fra FIP-prisen. | Velg faren med høyest pris, slik at duplikatregelen i CLAUDE.md følges |
-| M4 | `/forgot-password` | Ingen rate limit, så hvem som helst kan sende mange e-poster til en bruker | Samme rate limit som tilgangsforespørsel |
-| M5 | Generering og OSDM-editor | `json.loads` på hele filen. En fil på 1,2 GB krever trolig 8–12 GB RAM. Ingen størrelsesgrense på serveren. | Avklar om generering og editor skal håndtere DB-filer. Hvis ikke, bør det stå tydelig. |
-| M6 | `set_prices_from_adult` | Går gjennom alle kombinasjoner for hver relasjon (kvadratisk). Greit med 1 166 relasjoner, men uholdbart med 100 000. | Indekser kombinasjonene per relasjon |
-| M7 | `update_delivery` (editor) | Gyldighetsdatoer skrives som de kommer fra frontend, uten format og uten `utcOffset`, i motsetning til generering og prisregulering | Felles funksjon for kalenderoppdatering |
-| M8 | Hele appen | Tilstanden ligger i minnet. Kjører Railway noen gang mer enn én instans eller worker, forsvinner jobber og filer tilfeldig. | Dokumenter kravet om én instans |
+| M4 ✅ | `/forgot-password` | Ingen rate limit, så hvem som helst kan sende mange e-poster til en bruker | Samme rate limit som tilgangsforespørsel |
+| M5 ✅ | Generering og OSDM-editor | `json.loads` på hele filen. En fil på 1,2 GB krever trolig 8–12 GB RAM. Ingen størrelsesgrense på serveren. | Avklar om generering og editor skal håndtere DB-filer. Hvis ikke, bør det stå tydelig. |
+| M6 ✅ | `set_prices_from_adult` | Går gjennom alle kombinasjoner for hver relasjon (kvadratisk). Greit med 1 166 relasjoner, men uholdbart med 100 000. | Indekser kombinasjonene per relasjon |
+| M7 ✅ | `update_delivery` (editor) | Gyldighetsdatoer skrives som de kommer fra frontend, uten format og uten `utcOffset`, i motsetning til generering og prisregulering | Felles funksjon for kalenderoppdatering |
+| M8 ✅ | Hele appen | Tilstanden ligger i minnet. Kjører Railway noen gang mer enn én instans eller worker, forsvinner jobber og filer tilfeldig. | Dokumenter kravet om én instans |
 
 ---
 
