@@ -1119,6 +1119,10 @@ textarea { resize: vertical; font-family: inherit; }
 .translation-row { display: grid; grid-template-columns: 7rem 1fr 1fr auto; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }
 .translation-row input { margin: 0; }
 .translation-row button { margin-top: 0; }
+.cond-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 1rem; }
+.cond-card-title { font-weight: 600; margin-bottom: 0.25rem; }
+.cond-card .form-row { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-bottom: 0.5rem; }
+.cond-card .sub-label { font-size: 0.85rem; color: var(--text-muted); margin: 0.5rem 0 0.25rem; }
 .pager-row { align-items: center; margin-top: 0.25rem; }
 .pager-row .field-hint { margin: 0; }
 .data-table td.select-cell, .data-table th.select-cell { width: 1.5rem; }

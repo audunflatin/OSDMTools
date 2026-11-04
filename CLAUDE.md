@@ -242,6 +242,8 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 | `POST /osdm-editor/metadata` | Oppdaterer delivery-felt + kalenderperiode i store_entry |
 | `POST /osdm-editor/passenger/{pc_id}` | Setter ny ratio for en passasjerkategori, rekalkuderer alle priser for den kategorien |
 | `POST /osdm-editor/relation` | Legger til ny relasjon (RC + fares for alle passasjerkategorier × serviceklasser) |
+| `GET /osdm-editor/conditions` | Salgsperiode (`salesAvailabilityConstraint`), reisegyldighet (`travelValidityConstraints`) og grupper (`passengerCombinationConstraints`) med bundles som bruker dem, tillatte verdier og `warnings` |
+| `POST /osdm-editor/conditions/{sales\|travel\|group}/{id}` | sales: `{restrictions: [{start, end}]}` (samme antall som i fila); travel: `{value, timeUnit, hoursAfterMidnight, numberOfTravelDays, validityType}`; group: `{minWeightedPassengers, maxWeightedPassengers}` |
 | `GET /osdm-editor/relations?q=&offset=&limit=` | Relasjoner med fra/til (navn, UIC, grensekode), avstand, voksenpris og antall farer; søket krever at alle ordene treffer, eksakt ID gir bare den relasjonen |
 | `POST /osdm-editor/relation/{rc_id}` | `{distance, adult_price_eur}` (begge valgfrie) — ny voksenpris via `set_prices_from_adult` |
 | `POST /osdm-editor/relations/delete` | `{ids: [...]}` — sletter relasjoner med farer, og priser/vanlige punkter som slettingen gjør ubrukt |
@@ -255,6 +257,13 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 | `GET /osdm-editor/stations?q=&missing=` | Stasjonsnavn + stasjoner i punkter/ruter uten navn (maks 200 rader, `missing_count`, `short_max`) |
 | `POST /osdm-editor/station/{uic}` | `{name, shortName}` — oppdaterer eller legger til stasjonsnavn |
 | `GET /osdm-editor/download` | Serialiserer og returnerer endret OSDM-fil |
+
+### Salg, gyldighet og grupper (november 2026)
+- Betingelsene deles av bundlene (1076: M__1 og Q__1 brukes av både S__1 og S__2; T__1 = 1–9 vektede passasjerer, T__2 = grupper 10–36).
+- Tillatte verdier: `TimeUnit` og `ValidityType` fra 7.0-skjemaet. `timeReference` finnes ikke i 7.0 (bare offline 3.1) – vi tilbyr bare verdier sett i ekte filer (`BEFORE_START_VALIDITY`, `AFTER_END_VALIDITY`) og filens egen.
+- Talltypen i fila beholdes (`_num_like`): 1076 har `value: 2.0` og `maxWeightedPassengers: 9.0` (float), `numberOfTravelDays` som heltall.
+- `condition_warnings`: personkategori med vekt 0 i en bundle med grense < 999 teller ikke mot grensen (1076: Senior G__8 i S__1). Småbarn, dyr og tilleggsprodukter unntas.
+- `excludedTimeRange` vises som antall, men endres ikke.
 
 ### Relasjoner (november 2026)
 - `delete_relations` fjerner farene, prisene **bare de slettede farene** brukte og vanlige tilkoblingspunkter som ingen relasjon bruker lenger. Grensepunkter, stasjonsnavn og det som var ubrukt fra før røres ikke. Nekter å slette alle relasjonene (`fare_templates` til `add_relation` kommer fra første relasjon) og relasjoner som andre seksjoner peker på (`rc_in_use`; finnes ikke i 1076/0083).
@@ -376,8 +385,8 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 
 | Fil | Versjon |
 |---|---|
-| `styles.css` | v=36 |
-| `i18n.js` | v=66 (alle sider, også innloggingssidene) |
+| `styles.css` | v=37 |
+| `i18n.js` | v=67 (alle sider, også innloggingssidene) |
 | `app.js` | v=28 |
 | `admin.js` | v=23 |
 | `admin-log.js` | v=5 |
@@ -385,7 +394,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | `fareDiscount.js` | v=21 |
 | `priceAdjust.js` | v=13 |
 | `fixOsdm.js` | v=4 |
-| `osdmEditor.js` | v=9 |
+| `osdmEditor.js` | v=10 |
 | `stationLookup.js` | v=2 |
 | `presentation.js` | v=8 |
 | `common.js` | v=5 (alle verktøysider) |
@@ -393,7 +402,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-Alle HTML-filer laster `i18n.js` med samme versjon (v=66) — bump alle samtidig.
+Alle HTML-filer laster `i18n.js` med samme versjon (v=67) — bump alle samtidig.
 
 ---
 

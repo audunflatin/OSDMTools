@@ -9,7 +9,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=36">
+  <link rel="stylesheet" href="/static/styles.css?v=37">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
 
 </head>
@@ -41,6 +41,7 @@
         <button class="tab-btn" onclick="showTab('border')" id="tabBorder" data-i18n="editor_tab_border">Grensepunkter</button>
         <button class="tab-btn" onclick="showTab('texts')" id="tabTexts" data-i18n="editor_tab_texts">Tekster</button>
         <button class="tab-btn" onclick="showTab('stations')" id="tabStations" data-i18n="editor_tab_stations">Stasjonsnavn</button>
+        <button class="tab-btn" onclick="showTab('conditions')" id="tabConditions" data-i18n="editor_tab_conditions">Salg og gyldighet</button>
         <button class="tab-btn" onclick="showTab('download')" id="tabDownload" data-i18n="editor_tab_download">Last ned</button>
       </div>
 
@@ -315,6 +316,24 @@
         <div id="stMsg"></div>
       </div>
 
+      <!-- TAB: Sales, validity and groups -->
+      <div id="paneConditions" class="tab-pane">
+        <h3 class="subheading" data-i18n="editor_tab_conditions">Salg og gyldighet</h3>
+        <p class="panel-desc" data-i18n="editor_cond_desc"></p>
+        <div id="condWarnings"></div>
+        <div id="condMsg"></div>
+
+        <h3 class="subheading section-gap-sm" data-i18n="editor_cond_sales_heading">Salgsperiode</h3>
+        <p class="field-hint" data-i18n="editor_cond_calendar_note"></p>
+        <div id="condSales"></div>
+
+        <h3 class="subheading section-gap-sm" data-i18n="editor_cond_travel_heading">Reisegyldighet</h3>
+        <div id="condTravel"></div>
+
+        <h3 class="subheading section-gap-sm" data-i18n="editor_cond_group_heading">Antall passasjerer per billett</h3>
+        <div id="condGroups"></div>
+      </div>
+
       <!-- TAB: Download -->
       <div id="paneDownload" class="tab-pane center-block">
         <button id="downloadBtn" class="btn-primary" onclick="window.location.href='/osdm-editor/download'" data-i18n="btn_download_edited">Last ned redigert fil</button>
@@ -324,8 +343,8 @@
   </section>
 </div>
 
-<script src="/static/i18n.js?v=66"></script>
+<script src="/static/i18n.js?v=67"></script>
 <script src="/static/common.js?v=5"></script>
-<script src="/static/osdmEditor.js?v=9"></script>
+<script src="/static/osdmEditor.js?v=10"></script>
 </body>
 </html>

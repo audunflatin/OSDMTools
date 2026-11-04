@@ -1535,6 +1535,201 @@ def delete_relations(store_entry: dict, rc_ids: list) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Salg, reisegyldighet og grupper (constraints som bundlene peker på)
+# ---------------------------------------------------------------------------
+#
+# fareConstraintBundles peker på salesAvailabilityConstraintRef,
+# travelValidityConstraintRef og passengerCombinationConstraintRef. 1076 har
+# S__1 (vanlige billetter, 1–9 vektede passasjerer) og S__2 (grupper, 10–36).
+
+TIME_UNITS = ["DAYS", "HOURS", "MINUTES"]                        # 7.0: TimeUnit
+VALIDITY_TYPES = ["SINGLE_TRIP", "MULTIPLE_TRIPS", "UNRESTRICTED"]  # 7.0: ValidityType
+# timeReference finnes ikke i 7.0-skjemaet (bare offline 3.1); bare verdier sett i ekte filer
+TIME_REFERENCES = ["BEFORE_START_VALIDITY", "AFTER_END_VALIDITY"]
+# Personer som normalt har vekt 0 (gratis småbarn)
+_ZERO_WEIGHT_OK = {"YOUNG_CHILD", "FAMILY_CHILD"}
+_BUNDLE_REF_KEYS = {
+    "sales": ("salesAvailabilityConstraint", "salesAvailabilityConstraintRef"),
+    "travel": ("travelValidityConstraints", "travelValidityConstraintRef"),
+    "group": ("passengerCombinationConstraints", "passengerCombinationConstraintRef"),
+}
+
+
+def _bundles_using(fs: dict, ref_key: str) -> dict[str, list]:
+    result: dict[str, list] = {}
+    for b in fs.get("fareConstraintBundles", []):
+        ref = b.get(ref_key)
+        if ref:
+            result.setdefault(ref, []).append(b["id"])
+    return result
+
+
+def _num_like(old, new: float):
+    """Behold talltypen i fila (1076 har 2.0 og 9.0, 7.0-skjemaet heltall).
+    Desimaltall blir alltid float."""
+    return float(new) if isinstance(old, float) or new != int(new) else int(new)
+
+
+def _parse_num(value, lo: float, hi: float, field: str, integer: bool = True):
+    try:
+        n = float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        raise EditorError("cond_number_invalid", field=field)
+    if n != n or not lo <= n <= hi or (integer and n != int(n)):
+        raise EditorError("cond_number_invalid", field=field)
+    return int(n) if integer else n
+
+
+def _choice(value, allowed: list, current, error: str) -> str:
+    v = str(value or "").strip().upper()
+    if v not in allowed and v != current:
+        raise EditorError(error)
+    return v
+
+
+def condition_warnings(store_entry: dict) -> list[dict]:
+    """Personkategorier med vekt 0 i en bundle med øvre grense for vektede
+    passasjerer: de teller ikke mot grensen (1076: senior i S__1, maks 9)."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    groups = {g["id"]: g for g in fs.get("passengerCombinationConstraints", [])}
+    bundles = {b["id"]: b for b in fs.get("fareConstraintBundles", [])}
+    pcs = {pc["id"]: pc for pc in fs.get("passengerConstraints", [])}
+    text_map = store_entry.get("text_map", {})
+    _, pc_bundles = _pc_usage(fs)
+    warnings = []
+    for pc_id, bs in sorted(pc_bundles.items()):
+        pc = pcs.get(pc_id)
+        if not pc or pc.get("passengerType") in _NON_PERSON_TYPES | _ZERO_WEIGHT_OK or pc.get("isAncillaryItem"):
+            continue
+        if pc.get("passengerWeight") not in (0, 0.0):
+            continue
+        for b in sorted(bs):
+            g = groups.get((bundles.get(b) or {}).get("passengerCombinationConstraintRef"))
+            if g and isinstance(g.get("maxWeightedPassengers"), (int, float)) and g["maxWeightedPassengers"] < 999:
+                warnings.append({"code": "w_group_zero_weight", "params": {
+                    "pc": _pc_label(pc, text_map), "bundle": _short_id(b),
+                    "max": f'{g["maxWeightedPassengers"]:g}'}})
+    return warnings
+
+
+def list_conditions(store_entry: dict) -> dict:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    text_map = store_entry.get("text_map", {})
+    _, pc_bundles = _pc_usage(fs)
+    pcs = {pc["id"]: pc for pc in fs.get("passengerConstraints", [])}
+    bundle_pcs: dict[str, list] = {}
+    for pc_id, bs in pc_bundles.items():
+        for b in bs:
+            if pc_id in pcs:
+                bundle_pcs.setdefault(b, []).append(_pc_label(pcs[pc_id], text_map))
+
+    def usage(kind: str) -> dict[str, list]:
+        return _bundles_using(fs, _BUNDLE_REF_KEYS[kind][1])
+
+    def point(tp: dict) -> dict:
+        return {"timeUnit": tp.get("timeUnit", ""), "timeValue": tp.get("timeValue"),
+                "timeReference": tp.get("timeReference", "")}
+
+    sales_use, travel_use, group_use = usage("sales"), usage("travel"), usage("group")
+    seen_refs = {r.get(k, {}).get("timeReference") for c in fs.get("salesAvailabilityConstraint", [])
+                 for r in c.get("salesRestrictions") or [] for k in ("startOfSale", "endOfSale")}
+    return {
+        "sales": [{
+            "id": c["id"],
+            "bundles": sales_use.get(c["id"], []),
+            "restrictions": [{"start": point(r.get("startOfSale") or {}), "end": point(r.get("endOfSale") or {}),
+                              "salesDatesRef": r.get("salesDatesRef", "")}
+                             for r in c.get("salesRestrictions") or []],
+        } for c in fs.get("salesAvailabilityConstraint", [])],
+        "travel": [{
+            "id": c["id"],
+            "bundles": travel_use.get(c["id"], []),
+            "timeUnit": (c.get("validityRange") or {}).get("timeUnit", ""),
+            "value": (c.get("validityRange") or {}).get("value"),
+            "hoursAfterMidnight": (c.get("validityRange") or {}).get("hoursAfterMidnight"),
+            "numberOfTravelDays": c.get("numberOfTravelDays"),
+            "validityType": c.get("validityType", ""),
+            "excluded_count": len(c.get("excludedTimeRange") or c.get("excludedTimeRanges") or []),
+        } for c in fs.get("travelValidityConstraints", [])],
+        "groups": [{
+            "id": c["id"],
+            "bundles": group_use.get(c["id"], []),
+            "categories": sorted({n for b in group_use.get(c["id"], []) for n in bundle_pcs.get(b, [])}),
+            "minWeightedPassengers": c.get("minWeightedPassengers"),
+            "maxWeightedPassengers": c.get("maxWeightedPassengers"),
+        } for c in fs.get("passengerCombinationConstraints", [])],
+        "time_units": TIME_UNITS,
+        "time_references": sorted(set(TIME_REFERENCES) | {r for r in seen_refs if r}),
+        "validity_types": VALIDITY_TYPES,
+    }
+
+
+def _find_condition(fs: dict, kind: str, cid: str) -> dict:
+    section = _BUNDLE_REF_KEYS[kind][0]
+    c = next((x for x in fs.get(section, []) if x.get("id") == cid), None)
+    if c is None:
+        raise EditorError("cond_not_found")
+    return c
+
+
+def update_sales(store_entry: dict, cid: str, restrictions: list) -> dict:
+    """Endre salgsstart/-slutt. Antall restriksjoner og salesDatesRef beholdes."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    c = _find_condition(fs, "sales", cid)
+    existing = c.get("salesRestrictions") or []
+    if not isinstance(restrictions, list) or len(restrictions) != len(existing):
+        raise EditorError("invalid_input")
+    new_points = []
+    for old, new in zip(existing, restrictions):
+        if not isinstance(new, dict):
+            raise EditorError("invalid_input")
+        pair = {}
+        for key, field in (("startOfSale", "start"), ("endOfSale", "end")):
+            src = new.get(field) or {}
+            cur = old.get(key) or {}
+            pair[key] = {
+                "timeUnit": _choice(src.get("timeUnit"), TIME_UNITS, cur.get("timeUnit"), "cond_unit_invalid"),
+                "timeValue": _num_like(cur.get("timeValue"), _parse_num(src.get("timeValue"), 0, 10000, key)),
+                "timeReference": _choice(src.get("timeReference"), TIME_REFERENCES, cur.get("timeReference"),
+                                         "cond_reference_invalid"),
+            }
+        new_points.append(pair)
+    for old, pair in zip(existing, new_points):
+        for key, vals in pair.items():
+            old.setdefault(key, {}).update(vals)
+    return {"id": cid}
+
+
+def update_travel(store_entry: dict, cid: str, fields: dict) -> dict:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    c = _find_condition(fs, "travel", cid)
+    vr = c.get("validityRange") or {}
+    unit = _choice(fields.get("timeUnit"), TIME_UNITS, vr.get("timeUnit"), "cond_unit_invalid")
+    value = _parse_num(fields.get("value"), 1, 10000, "validityRange.value")
+    hours = _parse_num(fields.get("hoursAfterMidnight", 0) or 0, 0, 24, "hoursAfterMidnight")
+    days = _parse_num(fields.get("numberOfTravelDays"), 0, 10000, "numberOfTravelDays")
+    vtype = _choice(fields.get("validityType"), VALIDITY_TYPES, c.get("validityType"), "cond_validity_type_invalid")
+
+    c["validityRange"] = {**vr, "timeUnit": unit, "value": _num_like(vr.get("value"), value),
+                          "hoursAfterMidnight": _num_like(vr.get("hoursAfterMidnight"), hours)}
+    c["numberOfTravelDays"] = _num_like(c.get("numberOfTravelDays"), days)
+    c["validityType"] = vtype
+    return {"id": cid}
+
+
+def update_group(store_entry: dict, cid: str, min_w, max_w) -> dict:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    c = _find_condition(fs, "group", cid)
+    lo = _parse_num(min_w, 0, 9999, "minWeightedPassengers", integer=False)
+    hi = _parse_num(max_w, 0, 9999, "maxWeightedPassengers", integer=False)
+    if lo > hi:
+        raise EditorError("cond_group_order")
+    c["minWeightedPassengers"] = _num_like(c.get("minWeightedPassengers", 0.0), lo)
+    c["maxWeightedPassengers"] = _num_like(c.get("maxWeightedPassengers", 0.0), hi)
+    return {"id": cid}
+
+
 def set_prices_from_adult(store_entry: dict, rc_adult_prices: dict[str, float]) -> dict:
     """
     Sett priser for alle ikke-rabatterte farer i de angitte RC-ene.

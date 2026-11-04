@@ -46,13 +46,14 @@ async function loadFile() {
 // ---------------------------------------------------------------------------
 
 function showTab(name) {
-  ["overview", "passengers", "relations", "border", "texts", "stations", "download"].forEach(n => {
+  ["overview", "passengers", "relations", "border", "texts", "stations", "conditions", "download"].forEach(n => {
     document.getElementById("pane" + cap(n)).classList.toggle("active", n === name);
     document.getElementById("tab" + cap(n)).classList.toggle("active", n === name);
   });
   if (name === "border") loadBorderPoints();
   if (name === "relations") loadRelations();
   if (name === "texts") loadTexts();
+  if (name === "conditions") loadConditions();
   if (name === "stations") loadStations();
 }
 
@@ -876,6 +877,129 @@ document.addEventListener("click", e => {
   if (pr) return saveRatio(parseInt(pr.dataset.pcRatio, 10));
   const pe = e.target.closest("[data-pc-edit]");
   if (pe) return editPassenger(parseInt(pe.dataset.pcEdit, 10));
+});
+
+// ---------------------------------------------------------------------------
+// Sales period, travel validity and passengers per ticket
+// ---------------------------------------------------------------------------
+
+let _cond = null;
+
+async function loadConditions() {
+  try {
+    _cond = await getJson("/osdm-editor/conditions");
+    document.getElementById("condWarnings").innerHTML =
+      renderWarnings(_cond.warnings, t("editor_cond_warnings_title"), t("editor_cond_warnings_note"));
+    renderConditions();
+  } catch (e) {
+    document.getElementById("condSales").innerHTML = renderError(e.message);
+  }
+}
+
+/** <option>-liste med oversatt etikett der den finnes (t() gir nøkkelen tilbake ellers). */
+function condOptions(values, current, prefix) {
+  const list = values.includes(current) || !current ? values : [current, ...values];
+  return list.map(v => {
+    const label = t(prefix + v) === prefix + v ? v : `${t(prefix + v)} (${v})`;
+    return `<option value="${escapeHtml(v)}" ${v === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+}
+
+function condField(labelKey, inner) {
+  return `<div class="field-group"><label>${t(labelKey)}</label>${inner}</div>`;
+}
+
+function condNum(cls, value, step = "1") {
+  return `<input type="number" class="${cls}" min="0" step="${step}" value="${escapeHtml(value ?? "")}" />`;
+}
+
+function condCardHead(c) {
+  return `<div class="cond-card-title mono">${escapeHtml(pcShortId(c.id))}</div>
+    <p class="field-hint">${escapeHtml(t("editor_cond_used_by").replace("{list}", c.bundles.map(pcShortId).join(", ") || "–"))}</p>`;
+}
+
+function condSaveBtn(kind, i) {
+  return `<button class="btn-primary" data-cond-save="${kind}" data-cond-index="${i}">${t("btn_save_cond")}</button>`;
+}
+
+function salesPoint(p, which) {
+  return `<div class="sub-label">${t(which === "start" ? "editor_cond_start" : "editor_cond_end")}</div>
+    <div class="form-row" data-point="${which}">
+      ${condField("editor_cond_value", condNum("c-value", p.timeValue))}
+      ${condField("editor_cond_unit", `<select class="c-unit">${condOptions(_cond.time_units, p.timeUnit, "editor_unit_")}</select>`)}
+      ${condField("editor_cond_reference", `<select class="c-ref">${condOptions(_cond.time_references, p.timeReference, "editor_ref_")}</select>`)}
+    </div>`;
+}
+
+function renderConditions() {
+  document.getElementById("condSales").innerHTML = _cond.sales.map((c, i) => `
+    <div class="cond-card" data-kind="sales" data-index="${i}">
+      ${condCardHead(c)}
+      ${c.restrictions.map((r, j) => `<div data-restriction="${j}">${salesPoint(r.start, "start")}${salesPoint(r.end, "end")}</div>`).join("")}
+      ${condSaveBtn("sales", i)}
+    </div>`).join("") || "<p>–</p>";
+
+  document.getElementById("condTravel").innerHTML = _cond.travel.map((c, i) => `
+    <div class="cond-card" data-kind="travel" data-index="${i}">
+      ${condCardHead(c)}
+      <div class="form-row">
+        ${condField("editor_cond_validity_value", condNum("c-value", c.value))}
+        ${condField("editor_cond_unit", `<select class="c-unit">${condOptions(_cond.time_units, c.timeUnit, "editor_unit_")}</select>`)}
+        ${condField("editor_cond_hours_after", condNum("c-hours", c.hoursAfterMidnight))}
+        ${condField("editor_cond_travel_days", condNum("c-days", c.numberOfTravelDays))}
+        ${condField("editor_cond_validity_type", `<select class="c-vtype">${condOptions(_cond.validity_types, c.validityType, "editor_vtype_")}</select>`)}
+      </div>
+      ${c.excluded_count ? `<p class="field-hint">${t("editor_cond_excluded").replace("{n}", c.excluded_count)}</p>` : ""}
+      ${condSaveBtn("travel", i)}
+    </div>`).join("") || "<p>–</p>";
+
+  document.getElementById("condGroups").innerHTML = _cond.groups.map((c, i) => `
+    <div class="cond-card" data-kind="group" data-index="${i}">
+      ${condCardHead(c)}
+      <p class="field-hint">${escapeHtml(t("editor_cond_categories").replace("{list}", c.categories.join(", ") || "–"))}</p>
+      <div class="form-row">
+        ${condField("editor_cond_min", condNum("c-min", c.minWeightedPassengers, "0.5"))}
+        ${condField("editor_cond_max", condNum("c-max", c.maxWeightedPassengers, "0.5"))}
+      </div>
+      ${condSaveBtn("group", i)}
+    </div>`).join("") || "<p>–</p>";
+}
+
+async function saveCondition(kind, i) {
+  const card = document.querySelector(`.cond-card[data-kind="${kind}"][data-index="${i}"]`);
+  const val = cls => card.querySelector("." + cls).value.trim();
+  let item, body;
+  if (kind === "sales") {
+    item = _cond.sales[i];
+    body = { restrictions: [...card.querySelectorAll("[data-restriction]")].map(r => {
+      const pt = which => {
+        const row = r.querySelector(`[data-point="${which}"]`);
+        return { timeValue: row.querySelector(".c-value").value.trim(),
+                 timeUnit: row.querySelector(".c-unit").value,
+                 timeReference: row.querySelector(".c-ref").value };
+      };
+      return { start: pt("start"), end: pt("end") };
+    }) };
+  } else if (kind === "travel") {
+    item = _cond.travel[i];
+    body = { value: val("c-value"), timeUnit: val("c-unit"), hoursAfterMidnight: val("c-hours"),
+             numberOfTravelDays: val("c-days"), validityType: val("c-vtype") };
+  } else {
+    item = _cond.groups[i];
+    body = { minWeightedPassengers: val("c-min"), maxWeightedPassengers: val("c-max") };
+  }
+  try {
+    await postJson(`/osdm-editor/conditions/${kind}/${encodeURIComponent(item.id)}`, body);
+    await loadConditions();
+    showMsg("condMsg", `${pcShortId(item.id)}: ${t("editor_cond_saved")}`, "ok");
+  } catch (e) {
+    showMsg("condMsg", e.message, "err");
+  }
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-cond-save]");
+  if (b) saveCondition(b.dataset.condSave, parseInt(b.dataset.condIndex, 10));
 });
 
 // ---------------------------------------------------------------------------

@@ -193,6 +193,34 @@ async def editor_delete_relations(request: Request):
     return result
 
 
+@router.get("/osdm-editor/conditions")
+def editor_conditions(request: Request):
+    entry = _entry(request)
+    data = osdm_editor.list_conditions(entry)
+    data["warnings"] = [error_payload(w["code"], **w["params"]) for w in osdm_editor.condition_warnings(entry)]
+    return data
+
+
+@router.post("/osdm-editor/conditions/{kind}/{cid}")
+async def editor_update_condition(request: Request, kind: str, cid: str):
+    entry = _entry(request)
+    body = await request.json()
+    if not isinstance(body, dict) or kind not in ("sales", "travel", "group"):
+        raise AppError(422, "invalid_input")
+    try:
+        if kind == "sales":
+            result = osdm_editor.update_sales(entry, cid, body.get("restrictions"))
+        elif kind == "travel":
+            result = osdm_editor.update_travel(entry, cid, body)
+        else:
+            result = osdm_editor.update_group(entry, cid, body.get("minWeightedPassengers"),
+                                              body.get("maxWeightedPassengers"))
+    except osdm_editor.EditorError as e:
+        raise AppError(404 if e.code == "cond_not_found" else 400, e.code, **e.params)
+    log_event(request.session["user_email"], "editor_condition", detail={"kind": kind, **result})
+    return result
+
+
 @router.get("/osdm-editor/passengers")
 def editor_passengers(request: Request):
     entry = _entry(request)
