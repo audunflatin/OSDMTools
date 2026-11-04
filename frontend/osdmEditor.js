@@ -348,10 +348,10 @@ function renderPcTable() {
           <td class="nowrap">${escapeHtml(pcAgeText(pc))}</td>
           <td class="right">${pc.passengerWeight ?? "–"}</td>
           <td class="right">${pc.fare_count.toLocaleString()}</td>
-          <td class="nowrap">${pc.is_adult
+          <td><div class="ratio-cell">${pc.is_adult
             ? `<input class="pc-ratio-input" type="number" value="1.00" disabled>`
             : `<input class="pc-ratio-input" data-ratio-input="${i}" type="number" min="0" max="2" step="0.01" value="${pc.ratio.toFixed(4)}">
-               <button data-pc-ratio="${i}">${t("btn_save_ratio")}</button>`}</td>
+               <button data-pc-ratio="${i}">${t("btn_save_ratio")}</button>`}</div></td>
           <td class="right"><button data-pc-edit="${i}">${t("btn_edit")}</button></td>
         </tr>`).join("")}
       </tbody>
@@ -428,7 +428,7 @@ function closePassengerForm() {
 
 function addComboRow(c = {}) {
   const row = document.createElement("div");
-  row.className = "translation-row";
+  row.className = "translation-row combo-row";
   const options = _pcData.passengers.map(p =>
     `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(pcShortId(p.id))})</option>`).join("");
   row.innerHTML = `
@@ -900,8 +900,9 @@ async function loadConditions() {
 function condOptions(values, current, prefix) {
   const list = values.includes(current) || !current ? values : [current, ...values];
   return list.map(v => {
-    const label = t(prefix + v) === prefix + v ? v : `${t(prefix + v)} (${v})`;
-    return `<option value="${escapeHtml(v)}" ${v === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
+    // Oversatt etikett; OSDM-verdien vises som verktøytips (lange verdier kuttes ellers)
+    const label = t(prefix + v) === prefix + v ? v : t(prefix + v);
+    return `<option value="${escapeHtml(v)}" title="${escapeHtml(v)}" ${v === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
   }).join("");
 }
 

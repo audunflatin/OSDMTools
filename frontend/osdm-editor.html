@@ -9,7 +9,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=37">
+  <link rel="stylesheet" href="/static/styles.css?v=40">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
 
 </head>
@@ -125,13 +125,13 @@
               <input id="pcWeight" type="number" min="0" max="100" step="0.1" />
             </div>
             <div class="field-group field-group--end">
-              <label class="checkbox-inline">
+              <label class="checkbox-inline checkbox-inline--text">
                 <input id="pcAncillary" type="checkbox" />
                 <span data-i18n="editor_pc_ancillary">Tilleggsprodukt (isAncillaryItem)</span>
               </label>
             </div>
           </div>
-          <label id="pcSiblingsWrap" class="checkbox-inline" style="display:none;">
+          <label id="pcSiblingsWrap" class="checkbox-inline checkbox-inline--text" style="display:none;">
             <input id="pcSiblings" type="checkbox" />
             <span id="pcSiblingsLabel"></span>
           </label>
@@ -286,7 +286,7 @@
         <p class="panel-desc" data-i18n="editor_stations_desc"></p>
         <div class="filter-row">
           <input id="stSearch" class="search-input" type="search" data-i18n-placeholder="editor_stations_search_ph" placeholder="Søk på navn eller UIC-kode" oninput="onStationSearch()" />
-          <label class="checkbox-inline">
+          <label class="checkbox-inline checkbox-inline--text">
             <input id="stMissingOnly" type="checkbox" onchange="loadStations()" />
             <span id="stMissingLabel"></span>
           </label>
@@ -345,6 +345,6 @@
 
 <script src="/static/i18n.js?v=67"></script>
 <script src="/static/common.js?v=5"></script>
-<script src="/static/osdmEditor.js?v=10"></script>
+<script src="/static/osdmEditor.js?v=12"></script>
 </body>
 </html>

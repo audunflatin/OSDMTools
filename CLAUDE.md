@@ -385,7 +385,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 
 | Fil | Versjon |
 |---|---|
-| `styles.css` | v=37 |
+| `styles.css` | v=40 |
 | `i18n.js` | v=67 (alle sider, også innloggingssidene) |
 | `app.js` | v=28 |
 | `admin.js` | v=23 |
@@ -394,7 +394,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | `fareDiscount.js` | v=21 |
 | `priceAdjust.js` | v=13 |
 | `fixOsdm.js` | v=4 |
-| `osdmEditor.js` | v=10 |
+| `osdmEditor.js` | v=12 |
 | `stationLookup.js` | v=2 |
 | `presentation.js` | v=8 |
 | `common.js` | v=5 (alle verktøysider) |
