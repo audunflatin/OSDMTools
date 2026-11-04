@@ -576,10 +576,21 @@ def add_relation(
     next_price_num = _max_id_num(prices_list, id_prefix, "I") + 1
 
     # Finn eller lag CPs for de to UIC-kodene
+    border_by_code = {
+        _border_code(cp): cp["id"] for cp in cps_list if _border_code(cp) != "0"
+    }
+    names_by_uic = _station_names_by_uic(fs.get("stationNames", []))
+
     def ensure_cp(uic: str) -> str:
         if uic in uic_to_cp:
             return uic_to_cp[uic]
-        next_e = _max_id_num(cps_list, id_prefix, "E") + 1
+        # Grensestasjon (f.eks. Storlien(Gr) med kode 541): bruk grensepunktet
+        # med samme kode, slik eksisterende relasjoner gjør.
+        sn = names_by_uic.get(uic)
+        code = str(sn.get("legacyBorderPointCode", 0)) if sn else "0"
+        if code != "0" and code in border_by_code:
+            return border_by_code[code]
+        next_e = _next_cp_num(fs, id_prefix)
         cp_id = f"{id_prefix}E__{next_e}"
         country = _country_from_uic(uic)
         cps_list.append({
@@ -679,6 +690,680 @@ def add_relation(
         "distance": distance,
         "fares_created": created_fares,
     }
+
+
+# ---------------------------------------------------------------------------
+# Grensepunkter
+# ---------------------------------------------------------------------------
+#
+# Et grensepunkt er et connectionPoint med legacyBorderPointCode ≠ "0". Det har
+# som regel to stationSets: stasjonen på hver side av grensen (1076: Kornsjø
+# 7600551 / 7400731). Ferjehavner (0083: Ancona, Brindisi) har bare én side.
+# Koden står også i stationNames (som tall), og relasjonsrutene starter/slutter
+# på en av stasjonene i punktet.
+
+_UIC_RE = re.compile(r"^\d{7}$")
+_BORDER_CODE_RE = re.compile(r"^\d{1,5}$")
+
+
+def _border_code(cp: dict) -> str:
+    return str(cp.get("legacyBorderPointCode", "0") or "0").strip() or "0"
+
+
+def _is_border_cp(cp: dict) -> bool:
+    return _border_code(cp) != "0"
+
+
+def _station_name_uic(s: dict) -> str:
+    """UIC for en stationNames-oppføring (flatt `code` eller Trenitalias country+localCode)."""
+    if "code" in s:
+        return str(s["code"])
+    try:
+        return str(int(s["country"]) * 100000 + int(s["localCode"]))
+    except (KeyError, TypeError, ValueError):
+        return ""
+
+
+def _station_names_by_uic(station_names: list) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for s in station_names:
+        uic = _station_name_uic(s)
+        if uic and uic not in result:
+            result[uic] = s
+    return result
+
+
+def _next_cp_num(fs: dict, prefix: str) -> int:
+    """Neste ledige E-nummer. fulfillmentConstraints deler E-prefikset med
+    connectionPoints (1076: E__150, 0083: E__797), så begge må telles med."""
+    return max(
+        _max_id_num(fs.get("connectionPoints", []), prefix, "E"),
+        _max_id_num(fs.get("fulfillmentConstraints", []), prefix, "E"),
+    ) + 1
+
+
+def _cp_uics(cp: dict) -> list[str]:
+    return [str(s["code"]) for ss in cp.get("stationSets", []) for s in ss if s.get("codeList") == "UIC"]
+
+
+def _refresh_station_maps(store_entry: dict) -> None:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    store_entry["uic_to_cp"], store_entry["cp_to_uic"] = _build_cp_maps(fs.get("connectionPoints", []))
+    store_entry["station_name_map"] = _build_station_name_map(fs.get("stationNames", []))
+
+
+def list_border_points(store_entry: dict) -> list[dict]:
+    """Grensepunkter med stasjoner per side, antall relasjoner og advarselskoder."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    cps = [cp for cp in fs.get("connectionPoints", []) if _is_border_cp(cp)]
+    if not cps:
+        return []
+    names = _station_names_by_uic(fs.get("stationNames", []))
+    ids = {cp["id"] for cp in cps}
+
+    rc_count = {cid: 0 for cid in ids}
+    route_ends: dict[str, set] = {cid: set() for cid in ids}
+    for rc in fs.get("regionalConstraints", []):
+        route = []
+        rvs = rc.get("regionalValidity") or []
+        if rvs:
+            route = (rvs[0].get("viaStations") or {}).get("route") or []
+        for key, pos in (("entryConnectionPointId", 0), ("exitConnectionPointId", -1)):
+            cid = rc.get(key)
+            if cid in ids:
+                rc_count[cid] += 1
+                if route:
+                    code = (route[pos].get("station") or {}).get("code")
+                    if code:
+                        route_ends[cid].add(str(code))
+
+    result = []
+    for cp in cps:
+        code = _border_code(cp)
+        uics = set(_cp_uics(cp))
+        sides = []
+        for ss in cp.get("stationSets", []):
+            side = []
+            for s in ss:
+                uic = str(s.get("code", ""))
+                sn = names.get(uic)
+                side.append({
+                    "uic": uic,
+                    "country": s.get("country", ""),
+                    "name": (sn.get("nameUtf8") or sn.get("name") or "") if sn else "",
+                })
+            sides.append(side)
+
+        warnings = []
+        # Stasjonsnavn som har denne koden, men ikke ligger i punktet
+        elsewhere = [
+            f'{(s.get("nameUtf8") or s.get("name") or uic)} ({uic})'
+            for uic, s in names.items()
+            if str(s.get("legacyBorderPointCode", 0)) == code and uic not in uics
+        ]
+        if elsewhere:
+            warnings.append({"code": "bp_code_elsewhere", "params": {"stations": ", ".join(elsewhere)}})
+        # Rutene starter/slutter på en stasjon som ikke er i punktet
+        outside = sorted(route_ends[cp["id"]] - uics)
+        if outside:
+            labels = [f'{(names.get(u) or {}).get("nameUtf8") or (names.get(u) or {}).get("name") or u} ({u})' for u in outside]
+            warnings.append({"code": "bp_route_mismatch", "params": {"stations": ", ".join(labels)}})
+
+        result.append({
+            "id": cp["id"],
+            "code": code,
+            "sides": sides,
+            "rc_count": rc_count[cp["id"]],
+            "warnings": warnings,
+        })
+    result.sort(key=lambda b: int(b["code"]) if b["code"].isdigit() else 0)
+    return result
+
+
+def _validate_border_input(fs: dict, code: str, sides: list, own_cp_id: str | None) -> tuple[str, list[list[str]]]:
+    """Sjekk kode og stasjoner. Returnerer (kode, sider) eller kaster BorderPointError."""
+    code = str(code or "").strip()
+    if not _BORDER_CODE_RE.match(code) or int(code) == 0:
+        raise BorderPointError("bp_code_invalid")
+    for cp in fs.get("connectionPoints", []):
+        if cp["id"] != own_cp_id and _border_code(cp) == code:
+            raise BorderPointError("bp_code_in_use", value=code)
+
+    clean: list[list[str]] = []
+    seen: set[str] = set()
+    for side in sides or []:
+        uics = [str(u).strip() for u in (side or []) if str(u).strip()]
+        if not uics:
+            continue
+        for u in uics:
+            if not _UIC_RE.match(u):
+                raise BorderPointError("bp_uic_invalid", uic=u)
+            if u in seen:
+                raise BorderPointError("bp_uic_duplicate", uic=u)
+            seen.add(u)
+        clean.append(uics)
+    if not clean or len(clean) > 2:
+        raise BorderPointError("bp_sides_invalid")
+    return code, clean
+
+
+class EditorError(Exception):
+    """Feil med oversettbar kode (se core/errors.py); routeren gjør den om til AppError."""
+
+    def __init__(self, error_code: str, **params):
+        super().__init__(error_code)
+        self.code = error_code
+        self.params = params
+
+
+BorderPointError = EditorError
+
+
+def _station_entry(uic: str, existing: dict[str, dict]) -> dict:
+    if uic in existing:
+        return dict(existing[uic])
+    return {"codeList": "UIC", "code": uic, "country": _country_from_uic(uic)}
+
+
+def _set_station_names(fs: dict, names: dict[str, str]) -> None:
+    """Sett/legg til stasjonsnavn (fra grensepunktskjemaet). Tomme navn hoppes over."""
+    for uic, name in (names or {}).items():
+        uic = str(uic).strip()
+        name = str(name or "").strip()
+        if name and _UIC_RE.match(uic):
+            _upsert_station_name(fs, uic, name)
+
+
+def _check_uics_free(fs: dict, uics: list[str], allowed_cp_ids: set[str]) -> None:
+    for cp in fs.get("connectionPoints", []):
+        if cp["id"] in allowed_cp_ids:
+            continue
+        for u in _cp_uics(cp):
+            if u in uics:
+                raise BorderPointError("bp_uic_in_use", uic=u, cp=cp["id"])
+
+
+def update_border_point(store_entry: dict, cp_id: str, code: str, sides: list, names: dict | None = None) -> dict:
+    """Endre kode og stasjoner for et grensepunkt.
+
+    Stasjonsnavn med den gamle koden får den nye. Relasjonsrutene endres ikke.
+    """
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    cp = next((c for c in fs.get("connectionPoints", []) if c["id"] == cp_id), None)
+    if cp is None or not _is_border_cp(cp):
+        raise BorderPointError("bp_not_found")
+    old_code = _border_code(cp)
+    code, clean = _validate_border_input(fs, code, sides, cp_id)
+    _check_uics_free(fs, [u for side in clean for u in side], {cp_id})
+
+    existing = {str(s.get("code")): s for ss in cp.get("stationSets", []) for s in ss}
+    cp["legacyBorderPointCode"] = code
+    cp["stationSets"] = [[_station_entry(u, existing) for u in side] for side in clean]
+
+    if code != old_code:
+        for sn in fs.get("stationNames", []):
+            if str(sn.get("legacyBorderPointCode", 0)) == old_code:
+                sn["legacyBorderPointCode"] = int(code)
+    _set_station_names(fs, names or {})
+    _refresh_station_maps(store_entry)
+    return {"id": cp_id, "code": code}
+
+
+def add_border_point(store_entry: dict, code: str, sides: list, names: dict | None = None) -> dict:
+    """Legg til et grensepunkt.
+
+    Ligger stasjonen på første side allerede i et vanlig punkt (kode 0), gjøres
+    det punktet om til grensepunkt, slik at relasjonene som bruker det beholdes.
+    """
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    code, clean = _validate_border_input(fs, code, sides, None)
+    cps: list = fs.setdefault("connectionPoints", [])
+
+    first = clean[0][0]
+    target = next((c for c in cps if first in _cp_uics(c)), None)
+    if target is not None and _is_border_cp(target):
+        raise BorderPointError("bp_uic_in_use", uic=first, cp=target["id"])
+    allowed = {target["id"]} if target is not None else set()
+    _check_uics_free(fs, [u for side in clean for u in side], allowed)
+
+    if target is None:
+        prefix = store_entry["id_prefix"]
+        target = {"id": f"{prefix}E__{_next_cp_num(fs, prefix)}"}
+        cps.append(target)
+        converted = False
+    else:
+        converted = True
+    existing = {str(s.get("code")): s for ss in target.get("stationSets", []) for s in ss}
+    target["legacyBorderPointCode"] = code
+    target["stationSets"] = [[_station_entry(u, existing) for u in side] for side in clean]
+
+    _set_station_names(fs, names or {})
+    # Grensestasjonen på første side bærer koden i stationNames (som Kornsjø 543)
+    by_uic = _station_names_by_uic(fs.get("stationNames", []))
+    for u in clean[0]:
+        sn = by_uic.get(u)
+        if sn is not None and str(sn.get("legacyBorderPointCode", 0)) == "0":
+            sn["legacyBorderPointCode"] = int(code)
+    _refresh_station_maps(store_entry)
+    return {"id": target["id"], "code": code, "converted": converted}
+
+
+# ---------------------------------------------------------------------------
+# Tekster og stasjonsnavn
+# ---------------------------------------------------------------------------
+#
+# OSDM 3.1-filer har både `text` (ASCII, for 108.1-konvertering) og `textUtf8`;
+# 7.0 har bare `text` (UTF-8). Tilsvarende `name`/`nameUtf8` i stationNames.
+# 1076 skriver «Meraaker» og «Barn 6-17 year» i ASCII-feltene.
+
+_ASCII_MAP = {
+    "å": "aa", "Å": "Aa", "æ": "ae", "Æ": "Ae", "ø": "oe", "Ø": "Oe",
+    "ä": "ae", "Ä": "Ae", "ö": "oe", "Ö": "Oe", "ü": "ue", "Ü": "Ue", "ß": "ss",
+    "–": "-", "—": "-", "’": "'", "‘": "'", "«": '"', "»": '"', "“": '"', "”": '"', "„": '"',
+}
+_LANG_RE = re.compile(r"^[a-z]{2}$")
+
+
+def ascii_fold(text: str) -> str:
+    """ASCII-versjon av en tekst: æøå/äöü → ae/oe/aa/ue, øvrige aksenter fjernes."""
+    import unicodedata
+    s = "".join(_ASCII_MAP.get(ch, ch) for ch in text)
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in s if ord(ch) < 128 and not unicodedata.combining(ch))
+
+
+def _walk_refs(obj, ids: set, section: str, field: str | None, counts: dict) -> None:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _walk_refs(v, ids, section, k, counts)
+    elif isinstance(obj, list):
+        for v in obj:
+            _walk_refs(v, ids, section, field, counts)
+    elif isinstance(obj, str) and obj in ids:
+        key = (obj, f"{section}.{field}")
+        counts[key] = counts.get(key, 0) + 1
+
+
+# Seksjoner som aldri peker på tekster – hoppes over for fart (store i DB-filer)
+_NO_TEXT_REFS = {"texts", "prices", "regionalConstraints", "connectionPoints", "stationNames",
+                 "fareReferenceStationSetDefinitions"}
+
+
+def list_texts(store_entry: dict) -> list[dict]:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    texts = fs.get("texts", [])
+    ids = {t["id"] for t in texts if t.get("id")}
+    counts: dict[tuple, int] = {}
+    for section, items in fs.items():
+        if section not in _NO_TEXT_REFS:
+            _walk_refs(items, ids, section, None, counts)
+    used: dict[str, list] = {}
+    for (tid, where), n in sorted(counts.items(), key=lambda kv: kv[0][1]):
+        used.setdefault(tid, []).append({"where": where, "count": n})
+
+    result = []
+    for t in texts:
+        legacy = "textUtf8" in t or "shortTextUtf8" in t
+        result.append({
+            "id": t.get("id", ""),
+            "legacy_ascii": legacy,
+            "text": (t.get("textUtf8") if legacy else t.get("text")) or "",
+            "short_text": (t.get("shortTextUtf8") if legacy else t.get("shortText")) or "",
+            "text_ascii": t.get("text", "") if legacy else "",
+            "short_text_ascii": t.get("shortText", "") if legacy else "",
+            "translations": [
+                {"language": tr.get("language", ""), "text": tr.get("text", ""), "shortText": tr.get("shortText", "")}
+                for tr in t.get("translations") or []
+            ],
+            "used_by": used.get(t.get("id", ""), []),
+        })
+    return result
+
+
+def update_text(store_entry: dict, text_id: str, fields: dict) -> dict:
+    """Oppdater en tekst. Tomme ASCII-felt fylles med ASCII-versjonen av UTF-8-teksten,
+    tom korttekst blir lik teksten (slik filene gjør i dag)."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    t = next((x for x in fs.get("texts", []) if x.get("id") == text_id), None)
+    if t is None:
+        raise EditorError("text_not_found")
+    text = str(fields.get("text") or "").strip()
+    if not text:
+        raise EditorError("text_empty")
+    short = str(fields.get("shortText") or "").strip() or text
+
+    translations = []
+    for tr in fields.get("translations") or []:
+        if not isinstance(tr, dict):
+            raise EditorError("invalid_input")
+        lang = str(tr.get("language") or "").strip().lower()
+        tr_text = str(tr.get("text") or "").strip()
+        if not lang and not tr_text:
+            continue
+        if not _LANG_RE.match(lang):
+            raise EditorError("text_language_invalid", language=lang or "–")
+        if not tr_text:
+            raise EditorError("text_translation_empty", language=lang)
+        entry = {"language": lang, "text": tr_text}
+        tr_short = str(tr.get("shortText") or "").strip()
+        if tr_short:
+            entry["shortText"] = tr_short
+        translations.append(entry)
+    langs = [tr["language"] for tr in translations]
+    if len(langs) != len(set(langs)):
+        raise EditorError("text_language_duplicate")
+
+    if "textUtf8" in t or "shortTextUtf8" in t:
+        t["textUtf8"] = text
+        t["shortTextUtf8"] = short
+        t["text"] = ascii_fold(str(fields.get("textAscii") or "").strip() or text)
+        t["shortText"] = ascii_fold(str(fields.get("shortTextAscii") or "").strip() or short)
+    else:
+        t["text"] = text
+        t["shortText"] = short
+    t["translations"] = translations
+    store_entry["text_map"] = _build_text_map(fs.get("texts", []))
+    return {"id": text_id}
+
+
+def _referenced_station_uics(fs: dict) -> set[str]:
+    """UIC-koder som brukes i tilkoblingspunkter eller relasjonsruter."""
+    uics = {u for cp in fs.get("connectionPoints", []) for u in _cp_uics(cp)}
+
+    def walk_route(route):
+        for r in route or []:
+            code = (r.get("station") or {}).get("code")
+            if code:
+                uics.add(str(code))
+            walk_route(r.get("route"))
+            for alt in r.get("alternativeRoute") or []:
+                walk_route(alt.get("route") if isinstance(alt, dict) else alt)
+
+    for rc in fs.get("regionalConstraints", []):
+        for rv in rc.get("regionalValidity") or []:
+            walk_route((rv.get("viaStations") or {}).get("route"))
+    return uics
+
+
+def _upsert_station_name(fs: dict, uic: str, name: str, short_name: str = "") -> bool:
+    """Sett navn på en stasjon; lager ny oppføring i filens format. True = ny."""
+    station_names: list = fs.setdefault("stationNames", [])
+    sn = _station_names_by_uic(station_names).get(uic)
+    created = sn is None
+    if created:
+        italian_format = bool(station_names) and "code" not in station_names[0]
+        sn = {"country": int(uic[:2]), "localCode": int(uic[2:])} if italian_format else {"code": uic}
+        sn.update({"name": "", "nameUtf8": "", "shortName": "", "shortNameUtf8": "", "legacyBorderPointCode": 0})
+        station_names.append(sn)
+        short_name = short_name or name
+    if "nameUtf8" in sn or created:
+        sn["nameUtf8"] = name
+        sn["name"] = ascii_fold(name)
+    else:
+        sn["name"] = name
+    if short_name:
+        if "shortNameUtf8" in sn or created:
+            sn["shortNameUtf8"] = short_name
+            sn["shortName"] = ascii_fold(short_name)
+        else:
+            sn["shortName"] = short_name
+    return created
+
+
+def list_station_names(store_entry: dict, query: str = "", missing_only: bool = False, limit: int = 200) -> dict:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    names = _station_names_by_uic(fs.get("stationNames", []))
+    referenced = _referenced_station_uics(fs)
+    q = (query or "").strip().casefold()
+
+    rows = []
+    for uic in set(names) | referenced:
+        sn = names.get(uic)
+        row = {
+            "uic": uic,
+            "name": (sn.get("nameUtf8") or sn.get("name") or "") if sn else "",
+            "short_name": (sn.get("shortNameUtf8") or sn.get("shortName") or "") if sn else "",
+            "border_code": str(sn.get("legacyBorderPointCode", 0)) if sn else "0",
+            "in_file": sn is not None,
+            "used": uic in referenced,
+        }
+        if missing_only and row["in_file"]:
+            continue
+        if q and q not in uic and q not in row["name"].casefold() and q not in row["short_name"].casefold():
+            continue
+        rows.append(row)
+    rows.sort(key=lambda r: (r["in_file"], r["name"].casefold(), r["uic"]))
+    short_lengths = [len(s.get("shortNameUtf8") or s.get("shortName") or "") for s in names.values()]
+    return {
+        "stations": rows[:limit],
+        "total": len(rows),
+        "truncated": len(rows) > limit,
+        "missing_count": sum(1 for u in referenced if u not in names),
+        "short_max": max(short_lengths) if short_lengths else 0,
+    }
+
+
+def update_station_name(store_entry: dict, uic: str, name: str, short_name: str = "") -> dict:
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    uic = str(uic or "").strip()
+    if not _UIC_RE.match(uic):
+        raise EditorError("bp_uic_invalid", uic=uic)
+    name = str(name or "").strip()
+    if not name:
+        raise EditorError("station_name_empty")
+    created = _upsert_station_name(fs, uic, name, str(short_name or "").strip())
+    _refresh_station_maps(store_entry)
+    return {"uic": uic, "created": created}
+
+
+# ---------------------------------------------------------------------------
+# Passasjerkategorier (passengerConstraints)
+# ---------------------------------------------------------------------------
+#
+# 1076 har parvise kopier av samme kategori: G__1/G__2 (voksen) og G__3/G__4
+# (barn) – én for vanlige billetter (bundle S__1) og én for grupper (S__2).
+# Like aldersgrenser for samme type er derfor normalt; kontrollene ser på
+# kategoriene som brukes i samme bundle.
+
+PASSENGER_TYPES = [
+    "ADULT", "SENIOR", "YOUTH", "CHILD", "YOUNG_CHILD", "FAMILY_CHILD", "PERSON",
+    "PRM", "WHEELCHAIR", "DOG", "COMPANION_DOG", "PET", "BICYCLE", "PRAM",
+    "LUGGAGE", "CAR", "MOTORCYCLE", "TRAILER",
+]
+# Typer som ikke er personer – tas ikke med i alderskontrollene
+_NON_PERSON_TYPES = {"DOG", "COMPANION_DOG", "PET", "BICYCLE", "PRAM", "LUGGAGE",
+                     "CAR", "MOTORCYCLE", "TRAILER", "WHEELCHAIR"}
+_TYPE_RE = re.compile(r"^[A-Z][A-Z_]{1,39}$")
+_AGE_FIELDS = ("lowerAgeLimit", "upperAgeLimit", "ageLimitToTravelAlone", "ageLimitForReservation")
+
+
+def _pc_usage(fs: dict) -> tuple[dict[str, int], dict[str, set]]:
+    fare_count: dict[str, int] = {}
+    bundles: dict[str, set] = {}
+    for f in fs.get("fares", []):
+        pc = f.get("passengerConstraintRef")
+        if pc:
+            fare_count[pc] = fare_count.get(pc, 0) + 1
+            if f.get("bundleRef"):
+                bundles.setdefault(pc, set()).add(f["bundleRef"])
+    return fare_count, bundles
+
+
+def _short_id(item_id: str) -> str:
+    """«1076_7.0_G__1» → «G__1» (for meldinger)."""
+    m = re.search(r"[A-Z]__\d+$", item_id or "")
+    return m.group(0) if m else item_id
+
+
+def _pc_label(pc: dict, text_map: dict) -> str:
+    name = text_map.get(pc.get("nameRef", ""), "") or pc.get("passengerType", "")
+    return f"{name} ({_short_id(pc['id'])})"
+
+
+def passenger_warnings(store_entry: dict) -> list[dict]:
+    """Overlappende aldersintervaller og hull mellom personkategorier i samme bundle,
+    og kombinasjonsregler som peker på ukjente kategorier."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    pcs = fs.get("passengerConstraints", [])
+    by_id = {pc["id"]: pc for pc in pcs}
+    text_map = store_entry.get("text_map", {})
+    _, bundles = _pc_usage(fs)
+    warnings: list[dict] = []
+
+    for pc in pcs:
+        lo, hi = pc.get("lowerAgeLimit"), pc.get("upperAgeLimit")
+        if isinstance(lo, int) and isinstance(hi, int) and lo > hi:
+            warnings.append({"code": "w_pc_age_order", "params": {"pc": _pc_label(pc, text_map), "lower": lo, "upper": hi}})
+        for cc in pc.get("combinationConstraint") or []:
+            ref = cc.get("passengerConstraintRef")
+            if ref and ref not in by_id:
+                warnings.append({"code": "w_pc_comb_ref_unknown", "params": {"pc": _pc_label(pc, text_map), "ref": ref}})
+
+    bundle_pcs: dict[str, list] = {}
+    for pc_id, bs in bundles.items():
+        for b in bs:
+            if pc_id in by_id:
+                bundle_pcs.setdefault(b, []).append(by_id[pc_id])
+    for bundle in sorted(bundle_pcs):
+        persons = [
+            pc for pc in bundle_pcs[bundle]
+            if pc.get("passengerType") not in _NON_PERSON_TYPES and not pc.get("isAncillaryItem")
+            and isinstance(pc.get("lowerAgeLimit"), int) and isinstance(pc.get("upperAgeLimit"), int)
+            and pc["lowerAgeLimit"] <= pc["upperAgeLimit"]
+        ]
+        persons.sort(key=lambda pc: (pc["lowerAgeLimit"], pc["upperAgeLimit"]))
+        short_bundle = _short_id(bundle)
+        for i, a in enumerate(persons):
+            for b in persons[i + 1:]:
+                if b["lowerAgeLimit"] > a["upperAgeLimit"]:
+                    break
+                if a.get("passengerType") != b.get("passengerType"):
+                    warnings.append({"code": "w_pc_age_overlap", "params": {
+                        "bundle": short_bundle,
+                        "a": f'{_pc_label(a, text_map)} {a["lowerAgeLimit"]}–{a["upperAgeLimit"]}',
+                        "b": f'{_pc_label(b, text_map)} {b["lowerAgeLimit"]}–{b["upperAgeLimit"]}',
+                    }})
+        covered = -1
+        for pc in persons:
+            if covered >= 0 and pc["lowerAgeLimit"] > covered + 1:
+                warnings.append({"code": "w_pc_age_gap", "params": {
+                    "bundle": short_bundle, "from": covered + 1, "to": pc["lowerAgeLimit"] - 1}})
+            covered = max(covered, pc["upperAgeLimit"])
+    return warnings
+
+
+def passenger_details(store_entry: dict) -> list[dict]:
+    """Alle felt editoren kan endre, pluss bruk (farer, bundles) og «søsken»
+    (kategorier med samme navn og type, som 1076s G__1/G__2)."""
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    pcs = fs.get("passengerConstraints", [])
+    fare_count, bundles = _pc_usage(fs)
+    result = []
+    for pc in pcs:
+        siblings = [
+            o["id"] for o in pcs
+            if o["id"] != pc["id"] and o.get("nameRef") == pc.get("nameRef")
+            and o.get("passengerType") == pc.get("passengerType")
+        ]
+        result.append({
+            "id": pc["id"],
+            "nameRef": pc.get("nameRef", ""),
+            "passengerType": pc.get("passengerType", ""),
+            **{f: pc.get(f) for f in _AGE_FIELDS},
+            "passengerWeight": pc.get("passengerWeight"),
+            "isAncillaryItem": bool(pc.get("isAncillaryItem", False)),
+            "combinationConstraint": [
+                {"passengerConstraintRef": c.get("passengerConstraintRef", ""),
+                 "minNumber": c.get("minNumber", 0), "maxNumber": c.get("maxNumber", 0)}
+                for c in pc.get("combinationConstraint") or []
+            ],
+            "fare_count": fare_count.get(pc["id"], 0),
+            "bundles": sorted(bundles.get(pc["id"], [])),
+            "siblings": siblings,
+        })
+    return result
+
+
+def _int_field(fields: dict, key: str, lo: int, hi: int, error: str) -> int:
+    v = fields.get(key)
+    if isinstance(v, bool):
+        raise EditorError(error, field=key)
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise EditorError(error, field=key)
+    if str(v).strip() not in (str(n), f"{n}.0") or not lo <= n <= hi:
+        raise EditorError(error, field=key)
+    return n
+
+
+def update_passenger(store_entry: dict, pc_id: str, fields: dict, also_ids: list | None = None) -> dict:
+    """Endre type, aldersgrenser, vekt, navn og kombinasjonsregler for en kategori.
+
+    `also_ids`: kategorier med samme navn og type som skal få samme type og
+    aldersgrenser (vekt og kombinasjonsregler gjelder bare `pc_id`).
+    Ratio og priser røres ikke.
+    """
+    fs = store_entry["data"]["fareDelivery"]["fareStructure"]
+    pcs = fs.get("passengerConstraints", [])
+    by_id = {pc["id"]: pc for pc in pcs}
+    pc = by_id.get(pc_id)
+    if pc is None:
+        raise EditorError("pc_not_found")
+
+    ptype = str(fields.get("passengerType") or "").strip().upper()
+    if not _TYPE_RE.match(ptype):
+        raise EditorError("pc_type_invalid")
+    ages = {f: _int_field(fields, f, 0, 999, "pc_age_invalid") for f in _AGE_FIELDS}
+    if ages["lowerAgeLimit"] > ages["upperAgeLimit"]:
+        raise EditorError("pc_age_order")
+    try:
+        weight = float(fields.get("passengerWeight"))
+    except (TypeError, ValueError):
+        raise EditorError("pc_weight_invalid")
+    if not 0 <= weight <= 100 or weight != weight:
+        raise EditorError("pc_weight_invalid")
+
+    name_ref = str(fields.get("nameRef") or pc.get("nameRef") or "")
+    text_ids = {t.get("id") for t in fs.get("texts", [])}
+    if name_ref and name_ref not in text_ids:
+        raise EditorError("pc_name_ref_unknown")
+
+    combos = []
+    seen = set()
+    for c in fields.get("combinationConstraint") or []:
+        if not isinstance(c, dict):
+            raise EditorError("invalid_input")
+        ref = str(c.get("passengerConstraintRef") or "")
+        if ref not in by_id:
+            raise EditorError("pc_comb_ref_unknown", ref=ref or "–")
+        if ref in seen:
+            raise EditorError("pc_comb_duplicate", ref=ref)
+        seen.add(ref)
+        lo = _int_field(c, "minNumber", 0, 999, "pc_comb_invalid")
+        hi = _int_field(c, "maxNumber", 0, 999, "pc_comb_invalid")
+        if lo > hi:
+            raise EditorError("pc_comb_invalid", field="minNumber")
+        combos.append({"maxNumber": hi, "minNumber": lo, "passengerConstraintRef": ref})
+
+    targets = [pc]
+    for other_id in also_ids or []:
+        other = by_id.get(other_id)
+        if other is None or other_id == pc_id:
+            continue
+        if other.get("nameRef") != pc.get("nameRef") or other.get("passengerType") != pc.get("passengerType"):
+            raise EditorError("pc_not_sibling", pc=other_id)
+        targets.append(other)
+
+    for t in targets:
+        t["passengerType"] = ptype
+        t.update(ages)
+    if name_ref:
+        pc["nameRef"] = name_ref
+    pc["passengerWeight"] = weight
+    pc["isAncillaryItem"] = bool(fields.get("isAncillaryItem", False))
+    pc["combinationConstraint"] = combos
+    return {"id": pc_id, "updated": [t["id"] for t in targets]}
 
 
 def set_prices_from_adult(store_entry: dict, rc_adult_prices: dict[str, float]) -> dict:

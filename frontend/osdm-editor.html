@@ -9,7 +9,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192x192.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=32">
+  <link rel="stylesheet" href="/static/styles.css?v=35">
   <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('poptoosdm_theme')||'dark')</script>
 
 </head>
@@ -22,7 +22,7 @@
 <div class="container">
   <section class="panel">
     <h2 class="heading-with-badge"><span data-i18n="heading_osdm_editor">OSDM-editor</span><span class="beta-tag beta-tag--lg">BETA</span></h2>
-    <p class="panel-desc" data-i18n="editor_desc">Last opp en OSDM fareDelivery-fil for å redigere passasjerprofiler, leveransemetadata og strekningsrelasjoner.</p>
+    <p class="panel-desc" data-i18n="editor_desc">Last opp en OSDM fareDelivery-fil for å redigere passasjerprofiler, leveransemetadata, strekningsrelasjoner, grensepunkter, tekster og stasjonsnavn.</p>
 
     <!-- File upload -->
     <label data-i18n="label_osdm_editor_file">OSDM JSON-fil</label>
@@ -38,6 +38,9 @@
         <button class="tab-btn active" onclick="showTab('overview')" id="tabOverview" data-i18n="editor_tab_overview">Oversikt</button>
         <button class="tab-btn" onclick="showTab('passengers')" id="tabPassengers" data-i18n="editor_tab_passengers">Passasjerprofiler</button>
         <button class="tab-btn" onclick="showTab('relations')" id="tabRelations" data-i18n="editor_tab_relations">Relasjoner</button>
+        <button class="tab-btn" onclick="showTab('border')" id="tabBorder" data-i18n="editor_tab_border">Grensepunkter</button>
+        <button class="tab-btn" onclick="showTab('texts')" id="tabTexts" data-i18n="editor_tab_texts">Tekster</button>
+        <button class="tab-btn" onclick="showTab('stations')" id="tabStations" data-i18n="editor_tab_stations">Stasjonsnavn</button>
         <button class="tab-btn" onclick="showTab('download')" id="tabDownload" data-i18n="editor_tab_download">Last ned</button>
       </div>
 
@@ -84,7 +87,65 @@
 
       <!-- TAB: Passenger profiles -->
       <div id="panePassengers" class="tab-pane">
-        <div id="pcList"></div>
+        <div id="pcWarnings"></div>
+        <div id="pcTableWrap" class="table-scroll section-gap-sm"></div>
+        <div id="pcMsg"></div>
+
+        <div id="pcForm" style="display:none;">
+          <h3 class="subheading section-gap-sm" id="pcFormHeading"></h3>
+          <p class="field-hint" id="pcBundles"></p>
+          <div class="form-row form-row--spaced">
+            <div class="field-group">
+              <label data-i18n="editor_pc_name">Navn (tekst)</label>
+              <select id="pcNameRef"></select>
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_pc_type">Passasjertype</label>
+              <select id="pcType"></select>
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_pc_lower">Fra alder</label>
+              <input id="pcLower" type="number" min="0" max="999" step="1" />
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_pc_upper">Til alder</label>
+              <input id="pcUpper" type="number" min="0" max="999" step="1" />
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_pc_travel_alone">Kan reise alene fra alder</label>
+              <input id="pcTravelAlone" type="number" min="0" max="999" step="1" />
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_pc_reservation">Aldersgrense for reservasjon</label>
+              <input id="pcReservation" type="number" min="0" max="999" step="1" />
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_pc_weight">Vekt</label>
+              <input id="pcWeight" type="number" min="0" max="100" step="0.1" />
+            </div>
+            <div class="field-group field-group--end">
+              <label class="checkbox-inline">
+                <input id="pcAncillary" type="checkbox" />
+                <span data-i18n="editor_pc_ancillary">Tilleggsprodukt (isAncillaryItem)</span>
+              </label>
+            </div>
+          </div>
+          <label id="pcSiblingsWrap" class="checkbox-inline" style="display:none;">
+            <input id="pcSiblings" type="checkbox" />
+            <span id="pcSiblingsLabel"></span>
+          </label>
+
+          <h3 class="subheading section-gap-sm" data-i18n="editor_pc_comb">Kombinasjonsregler</h3>
+          <p class="field-hint" data-i18n="editor_pc_comb_hint"></p>
+          <div id="pcCombos"></div>
+          <button onclick="addComboRow()" data-i18n="btn_add_comb">Legg til regel</button>
+
+          <p class="field-hint section-gap-sm" data-i18n="editor_pc_price_note"></p>
+          <div class="button-row">
+            <button class="btn-primary" onclick="savePassenger()" data-i18n="btn_save_pc">Lagre kategori</button>
+            <button onclick="closePassengerForm()" data-i18n="btn_cancel">Avbryt</button>
+          </div>
+        </div>
       </div>
 
       <!-- TAB: Relations -->
@@ -115,6 +176,116 @@
         <div id="rcTableWrap" class="table-scroll section-gap-sm"></div>
       </div>
 
+      <!-- TAB: Border points -->
+      <div id="paneBorder" class="tab-pane">
+        <h3 class="subheading" data-i18n="editor_tab_border">Grensepunkter</h3>
+        <p class="panel-desc" data-i18n="editor_border_desc"></p>
+        <div id="bpTableWrap" class="table-scroll"></div>
+
+        <h3 class="subheading section-gap-sm" id="bpFormHeading" data-i18n="editor_border_add_heading">Nytt grensepunkt</h3>
+        <div class="form-row form-row--spaced">
+          <div class="field-group">
+            <label data-i18n="editor_border_code">Grensepunktkode</label>
+            <input id="bpCode" type="text" inputmode="numeric" placeholder="543" />
+          </div>
+          <div class="field-group">
+            <label data-i18n="editor_border_side1">UIC-koder side 1</label>
+            <input id="bpSide1" type="text" placeholder="7600551" oninput="renderBorderNameInputs()" />
+          </div>
+          <div class="field-group">
+            <label data-i18n="editor_border_side2">UIC-koder side 2 (valgfri)</label>
+            <input id="bpSide2" type="text" placeholder="7400731" oninput="renderBorderNameInputs()" />
+          </div>
+        </div>
+        <p class="field-hint" data-i18n="editor_border_uic_hint"></p>
+        <div id="bpNamesWrap" style="display:none;">
+          <label data-i18n="editor_border_names">Stasjonsnavn</label>
+          <div id="bpNames" class="form-row"></div>
+        </div>
+        <p class="field-hint" data-i18n="editor_border_route_note"></p>
+        <div class="button-row">
+          <button id="bpSaveBtn" class="btn-primary" onclick="saveBorderPoint()" data-i18n="btn_add_border">Legg til grensepunkt</button>
+          <button id="bpCancelBtn" onclick="resetBorderForm()" style="display:none;" data-i18n="btn_cancel">Avbryt</button>
+        </div>
+        <div id="bpMsg"></div>
+      </div>
+
+      <!-- TAB: Texts -->
+      <div id="paneTexts" class="tab-pane">
+        <h3 class="subheading" data-i18n="editor_tab_texts">Tekster</h3>
+        <p class="panel-desc" data-i18n="editor_texts_desc"></p>
+        <div id="txtTableWrap" class="table-scroll"></div>
+
+        <div id="txtForm" style="display:none;">
+          <h3 class="subheading section-gap-sm" id="txtFormHeading"></h3>
+          <div class="form-row form-row--spaced">
+            <div class="field-group">
+              <label data-i18n="editor_text_text">Tekst</label>
+              <input id="txtText" type="text" />
+            </div>
+            <div class="field-group">
+              <label data-i18n="editor_text_short">Kort tekst</label>
+              <input id="txtShort" type="text" />
+            </div>
+            <div class="field-group txt-ascii">
+              <label data-i18n="editor_text_ascii">ASCII-tekst (108.1)</label>
+              <input id="txtTextAscii" type="text" />
+            </div>
+            <div class="field-group txt-ascii">
+              <label data-i18n="editor_text_short_ascii">ASCII kort tekst (108.1)</label>
+              <input id="txtShortAscii" type="text" />
+            </div>
+          </div>
+          <p class="field-hint txt-ascii" data-i18n="editor_text_ascii_hint"></p>
+
+          <label data-i18n="editor_text_translations">Oversettelser</label>
+          <div id="txtTranslations"></div>
+          <button onclick="addTranslationRow()" data-i18n="btn_add_translation">Legg til oversettelse</button>
+
+          <div class="button-row section-gap-sm">
+            <button class="btn-primary" onclick="saveText()" data-i18n="btn_save_text">Lagre tekst</button>
+            <button onclick="closeTextForm()" data-i18n="btn_cancel">Avbryt</button>
+          </div>
+        </div>
+        <div id="txtMsg"></div>
+      </div>
+
+      <!-- TAB: Station names -->
+      <div id="paneStations" class="tab-pane">
+        <h3 class="subheading" data-i18n="editor_tab_stations">Stasjonsnavn</h3>
+        <p class="panel-desc" data-i18n="editor_stations_desc"></p>
+        <div class="filter-row">
+          <input id="stSearch" class="search-input" type="search" data-i18n-placeholder="editor_stations_search_ph" placeholder="Søk på navn eller UIC-kode" oninput="onStationSearch()" />
+          <label class="checkbox-inline">
+            <input id="stMissingOnly" type="checkbox" onchange="loadStations()" />
+            <span id="stMissingLabel"></span>
+          </label>
+        </div>
+        <div id="stTableWrap" class="table-scroll"></div>
+
+        <h3 class="subheading section-gap-sm" id="stFormHeading" data-i18n="editor_station_add_heading">Legg til eller endre stasjonsnavn</h3>
+        <div class="form-row form-row--spaced">
+          <div class="field-group">
+            <label data-i18n="editor_station_uic">UIC-kode</label>
+            <input id="stUic" type="text" inputmode="numeric" placeholder="7600100" />
+          </div>
+          <div class="field-group">
+            <label data-i18n="editor_station_name">Navn</label>
+            <input id="stName" type="text" />
+          </div>
+          <div class="field-group">
+            <label data-i18n="editor_station_short">Kortnavn (valgfri)</label>
+            <input id="stShort" type="text" />
+          </div>
+        </div>
+        <p class="field-hint" id="stShortHint"></p>
+        <div class="button-row">
+          <button class="btn-primary" onclick="saveStation()" data-i18n="btn_save_station">Lagre stasjonsnavn</button>
+          <button onclick="resetStationForm()" data-i18n="btn_cancel">Avbryt</button>
+        </div>
+        <div id="stMsg"></div>
+      </div>
+
       <!-- TAB: Download -->
       <div id="paneDownload" class="tab-pane center-block">
         <button id="downloadBtn" class="btn-primary" onclick="window.location.href='/osdm-editor/download'" data-i18n="btn_download_edited">Last ned redigert fil</button>
@@ -124,8 +295,8 @@
   </section>
 </div>
 
-<script src="/static/i18n.js?v=62"></script>
+<script src="/static/i18n.js?v=65"></script>
 <script src="/static/common.js?v=5"></script>
-<script src="/static/osdmEditor.js?v=5"></script>
+<script src="/static/osdmEditor.js?v=8"></script>
 </body>
 </html>

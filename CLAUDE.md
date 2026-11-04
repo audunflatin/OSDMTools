@@ -242,7 +242,37 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 | `POST /osdm-editor/metadata` | Oppdaterer delivery-felt + kalenderperiode i store_entry |
 | `POST /osdm-editor/passenger/{pc_id}` | Setter ny ratio for en passasjerkategori, rekalkuderer alle priser for den kategorien |
 | `POST /osdm-editor/relation` | Legger til ny relasjon (RC + fares for alle passasjerkategorier × serviceklasser) |
+| `GET /osdm-editor/passengers` | Kategorier med alle redigerbare felt, ratio, antall farer, bundles, «søsken» + kontroll (`warnings`), typeliste og tekster |
+| `POST /osdm-editor/passenger/{pc_id}/details` | Type, aldersgrenser, vekt, navn (`nameRef`), `isAncillaryItem`, `combinationConstraint`; `also_ids` = søsken som får samme type/alder |
+| `GET /osdm-editor/border-points` | Lister grensepunkter med stasjoner per side, antall relasjoner og advarsler |
+| `POST /osdm-editor/border-point` | Nytt grensepunkt `{code, sides: [[uic…], [uic…]], names: {uic: navn}}` |
+| `POST /osdm-editor/border-point/{cp_id}` | Endrer kode/stasjoner/navn for et grensepunkt |
+| `GET /osdm-editor/texts` | Lister tekster med UTF-8/ASCII-versjon, oversettelser og hvor de brukes (`fares.nameRef` …) |
+| `POST /osdm-editor/text/{text_id}` | `{text, shortText, textAscii, shortTextAscii, translations: [{language, text, shortText}]}` |
+| `GET /osdm-editor/stations?q=&missing=` | Stasjonsnavn + stasjoner i punkter/ruter uten navn (maks 200 rader, `missing_count`, `short_max`) |
+| `POST /osdm-editor/station/{uic}` | `{name, shortName}` — oppdaterer eller legger til stasjonsnavn |
 | `GET /osdm-editor/download` | Serialiserer og returnerer endret OSDM-fil |
+
+### Passasjerkategorier (november 2026)
+1076 har parvise kopier av samme kategori: G__1/G__2 (voksen) og G__3/G__4 (barn) – én for vanlige billetter (bundle S__1) og én for grupper (S__2). «Søsken» = samme `nameRef` og `passengerType`; skjemaet tilbyr å endre type og aldersgrenser på dem samtidig (vekt og kombinasjonsregler gjelder bare den valgte).
+- `passenger_warnings` sammenligner personkategorier **innenfor samme bundle**: overlappende aldersintervaller mellom ulike typer og hull inne i aldersspennet (ikke i endene – 0083 har ingen kategori for 0–3 år, det er bevisst). Dyr, bagasje o.l. (`_NON_PERSON_TYPES`) og `isAncillaryItem` tas ikke med.
+- `update_passenger` validerer alt før noe endres, og rører ikke ratio eller priser.
+- `passengerType` er en utvidbar liste (7.0: `x-extensible-enum`); 3.1-filene bruker ADULT, CHILD, YOUNG_CHILD, SENIOR, DOG. Ukjente verdier i store bokstaver godtas.
+
+### Grensepunkter (november 2026)
+Grensepunkt = `connectionPoint` med `legacyBorderPointCode` ≠ "0" (streng), vanligvis to `stationSets` (én stasjon per side av grensen). Ferjehavner (0083: Ancona 2517, Brindisi 2519) har én side. Koden står også i `stationNames.legacyBorderPointCode` (tall). Relasjonene peker på punktet; rutene (`viaStations.route`) starter/slutter på en av stasjonene i punktet.
+- `list_border_points` varsler om stasjonsnavn med samme kode utenfor punktet og ruter som starter/slutter utenfor punktet. 1076: punkt 541 har Meråker (7601214), men rutene og navnet med kode 541 er Storlien (7601218).
+- `update_border_point` endrer ikke relasjonsrutene. Endret kode overføres til `stationNames` med gammel kode.
+- `add_border_point` gjør et eksisterende vanlig punkt om til grensepunkt hvis stasjonen på side 1 allerede ligger i ett (relasjonene beholdes).
+- `add_relation` til en stasjon med grensepunktkode i `stationNames` (f.eks. Storlien(Gr)) bruker grensepunktet med den koden i stedet for å lage et nytt punkt.
+- Nye stasjonsnavn følger filens format (`code` eller Trenitalias `country`+`localCode`).
+
+### Tekster og stasjonsnavn (november 2026)
+OSDM 3.1-filer har både `text` (ASCII, brukes ved konvertering til 108.1) og `textUtf8`, og tilsvarende `shortText`/`shortTextUtf8` og `name`/`nameUtf8` i `stationNames`. 7.0 har bare `text`/`shortText` (UTF-8). ASCII-feltene kan avvike fra UTF-8-teksten (1076: «Barn 6-17 år» / «Barn 6-17 year»).
+- `update_text` / `_upsert_station_name` skriver UTF-8-feltet og lager ASCII-feltet med `ascii_fold()` (æ→ae, ø→oe, å→aa, ä→ae, ö→oe, ü→ue, aksenter fjernes), med mindre brukeren har fylt inn ASCII-teksten selv. Tom korttekst blir lik teksten.
+- Oversettelser følger 7.0-skjemaet: `{language (ISO 639-1), text, shortText?}`.
+- Etter endring oppdateres `text_map` / `station_name_map` i store_entry, så oversikten viser nye navn.
+- Feil fra editorlogikken kastes som `osdm_editor.EditorError(kode, **params)` og gjøres om til `AppError` i routeren. Ikke bruk parameternavnet `code` (kolliderer med feilkoden).
 
 ### `osdm_editor.load_osdm(content: bytes)` — returnerer store_entry dict med:
 - `data` — hele den parsede JSON (muteres av alle operations)
@@ -338,8 +368,8 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 
 | Fil | Versjon |
 |---|---|
-| `styles.css` | v=32 |
-| `i18n.js` | v=62 (alle sider, også innloggingssidene) |
+| `styles.css` | v=35 |
+| `i18n.js` | v=65 (alle sider, også innloggingssidene) |
 | `app.js` | v=28 |
 | `admin.js` | v=23 |
 | `admin-log.js` | v=5 |
@@ -347,7 +377,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | `fareDiscount.js` | v=21 |
 | `priceAdjust.js` | v=13 |
 | `fixOsdm.js` | v=4 |
-| `osdmEditor.js` | v=5 |
+| `osdmEditor.js` | v=8 |
 | `stationLookup.js` | v=2 |
 | `presentation.js` | v=8 |
 | `common.js` | v=5 (alle verktøysider) |
@@ -355,7 +385,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-Alle HTML-filer laster `i18n.js` med samme versjon (v=62) — bump alle samtidig.
+Alle HTML-filer laster `i18n.js` med samme versjon (v=65) — bump alle samtidig.
 
 ---
 
@@ -413,6 +443,7 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 - **price-adjust: ID-mismatch ved ny delivery_id** — se avsnittet om prisregulering ovenfor.
 - **`ijson` returnerer Python `int` for heltall i JSON** (ikke `Decimal`). `Decimal` oppstår kun for desimaltall. I fix_osdm brukes ijson til full parse → `default=_ijson_default` i json.dumps håndterer eventuelle Decimal-verdier. I price-adjust og andre steder brukes ijson kun for streaming, og tallverdier er typisk heltall.
 - **Én instans, hele filen i minnet for noen tjenester.** All tilstand (jobber, opplastede filer) ligger i prosessens minne — appen må kjøre som **én** instans med **én** worker. Generering, prisregulering og OSDM-editoren gjør `json.loads` på hele filen (~10× filstørrelse i RAM): greit for operatørfiler (1076 ≈ 10 MB), ikke for DB-filer på 1,2 GB. Validering, Excel-eksport, «Rydd opp» og fare-discount strømmer med `ijson` og tåler store filer.
+- **E-prefikset deles av `connectionPoints` og `fulfillmentConstraints`** (1076: `E__150`, 0083: `E__797`). Nye punkter må få nummer via `_next_cp_num()`, ellers kolliderer ID-en (feil i `add_relation` fram til nov. 2026).
 - **Kalenderdatoer** settes alltid med `osdm_editor.set_calendar_validity()` (lokal dato + `+0000`, `utcOffset` for Oslo). Editoren får/sender `YYYY-MM-DD`.
 - **Priser i flere valutaer**: bruk `osdm_editor.eur_entry()` / `_get_price_eur()`, aldri `price[0]`.
 - **Sidebar span-arving** — koblingene som pakker tekst i `<span>` (OSDM-editor med BETA-tag, Brukere med pending-badge) arvet ikke `--text-muted` korrekt fra parent-`<a>` i mørk modus. Løst med eksplisitte `.sidebar-link span:not(.beta-tag)` farger i `styles.css`.

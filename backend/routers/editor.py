@@ -1,4 +1,4 @@
-"""OSDM-editor: passasjerratioer, metadata og nye relasjoner."""
+"""OSDM-editor: passasjerratioer, metadata, relasjoner, grensepunkter, tekster og stasjonsnavn."""
 from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, Response
@@ -8,7 +8,7 @@ import backend.osdm_editor as osdm_editor
 from backend.core.security import _safe_filename, require_login, log_event
 from backend.core.pages import serve_page
 from backend.core.state import EDIT_STORE
-from backend.core.errors import AppError
+from backend.core.errors import AppError, error_payload
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -94,6 +94,138 @@ async def editor_relation(request: Request):
         raise AppError(422, "price_distance_invalid")
     result = await run_in_threadpool(osdm_editor.add_relation, entry, from_uic, to_uic, adult_price_eur, distance)
     log_event(user_email, "editor_relation", detail=result)
+    return result
+
+
+def _border_body(body: dict) -> tuple[str, list, dict]:
+    sides = body.get("sides")
+    names = body.get("names") or {}
+    if not isinstance(sides, list) or not isinstance(names, dict):
+        raise AppError(422, "invalid_input")
+    return str(body.get("code", "")), sides, names
+
+
+@router.get("/osdm-editor/border-points")
+def editor_border_points(request: Request):
+    require_login(request)
+    entry = EDIT_STORE.get(request.session["user_email"])
+    if not entry:
+        raise AppError(404, "no_file_loaded")
+    points = osdm_editor.list_border_points(entry)
+    for bp in points:
+        bp["warnings"] = [error_payload(w["code"], **w["params"]) for w in bp["warnings"]]
+    return {"border_points": points}
+
+
+@router.post("/osdm-editor/border-point")
+async def editor_add_border_point(request: Request):
+    require_login(request)
+    user_email = request.session["user_email"]
+    entry = EDIT_STORE.get(user_email)
+    if not entry:
+        raise AppError(404, "no_file_loaded")
+    code, sides, names = _border_body(await request.json())
+    try:
+        result = osdm_editor.add_border_point(entry, code, sides, names)
+    except osdm_editor.BorderPointError as e:
+        raise AppError(400, e.code, **e.params)
+    log_event(user_email, "editor_border_point", detail=result)
+    return result
+
+
+@router.post("/osdm-editor/border-point/{cp_id}")
+async def editor_update_border_point(request: Request, cp_id: str):
+    require_login(request)
+    user_email = request.session["user_email"]
+    entry = EDIT_STORE.get(user_email)
+    if not entry:
+        raise AppError(404, "no_file_loaded")
+    code, sides, names = _border_body(await request.json())
+    try:
+        result = osdm_editor.update_border_point(entry, cp_id, code, sides, names)
+    except osdm_editor.BorderPointError as e:
+        raise AppError(400 if e.code != "bp_not_found" else 404, e.code, **e.params)
+    log_event(user_email, "editor_border_point", detail=result)
+    return result
+
+
+def _entry(request: Request) -> dict:
+    require_login(request)
+    entry = EDIT_STORE.get(request.session["user_email"])
+    if not entry:
+        raise AppError(404, "no_file_loaded")
+    return entry
+
+
+@router.get("/osdm-editor/passengers")
+def editor_passengers(request: Request):
+    entry = _entry(request)
+    text_map = entry.get("text_map", {})
+    passengers = osdm_editor.passenger_details(entry)
+    for pc in passengers:
+        pc["name"] = text_map.get(pc["nameRef"], "") or pc["id"]
+        pc["ratio"] = round(entry["ratios"].get(pc["id"], 0.0), 4)
+        pc["is_adult"] = pc["id"] == entry["adult_id"]
+    fs = entry["data"]["fareDelivery"]["fareStructure"]
+    return {
+        "passengers": passengers,
+        "warnings": [error_payload(w["code"], **w["params"]) for w in osdm_editor.passenger_warnings(entry)],
+        "types": osdm_editor.PASSENGER_TYPES,
+        "texts": [{"id": t.get("id", ""), "text": text_map.get(t.get("id", ""), "")} for t in fs.get("texts", [])],
+    }
+
+
+@router.post("/osdm-editor/passenger/{pc_id}/details")
+async def editor_passenger_details(request: Request, pc_id: str):
+    entry = _entry(request)
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("also_ids", []), list) \
+            or not isinstance(body.get("combinationConstraint", []), list):
+        raise AppError(422, "invalid_input")
+    try:
+        result = osdm_editor.update_passenger(entry, pc_id, body, body.get("also_ids"))
+    except osdm_editor.EditorError as e:
+        raise AppError(404 if e.code == "pc_not_found" else 400, e.code, **e.params)
+    log_event(request.session["user_email"], "editor_passenger_details", detail=result)
+    return result
+
+
+@router.get("/osdm-editor/texts")
+def editor_texts(request: Request):
+    return {"texts": osdm_editor.list_texts(_entry(request))}
+
+
+@router.post("/osdm-editor/text/{text_id}")
+async def editor_update_text(request: Request, text_id: str):
+    entry = _entry(request)
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("translations", []), list):
+        raise AppError(422, "invalid_input")
+    try:
+        result = osdm_editor.update_text(entry, text_id, body)
+    except osdm_editor.EditorError as e:
+        raise AppError(404 if e.code == "text_not_found" else 400, e.code, **e.params)
+    log_event(request.session["user_email"], "editor_text", detail=result)
+    return result
+
+
+@router.get("/osdm-editor/stations")
+def editor_stations(request: Request, q: str = "", missing: bool = False):
+    entry = _entry(request)
+    return osdm_editor.list_station_names(entry, q[:100], missing)
+
+
+@router.post("/osdm-editor/station/{uic}")
+async def editor_update_station(request: Request, uic: str):
+    entry = _entry(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise AppError(422, "invalid_input")
+    try:
+        result = osdm_editor.update_station_name(entry, uic, body.get("name", ""), body.get("shortName", ""))
+    except osdm_editor.EditorError as e:
+        raise AppError(400, e.code, **e.params)
+    log_event(request.session["user_email"], "editor_station", detail=result)
     return result
 
 
