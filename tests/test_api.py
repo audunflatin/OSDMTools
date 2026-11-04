@@ -172,3 +172,132 @@ def test_emails_escape_user_input(monkeypatch):
     email_utils.send_contact_email("Navn\nBcc: x@y.no", "x@x.no", "<script>alert(1)</script>")
     assert "\n" not in captured["subject"]
     assert "<script>" not in captured["html"]
+
+
+@pytest.mark.parametrize("name", [
+    "validate_distances", "osdm_to_csv", "price_adjust",
+    "fare_discount_apply", "fix_osdm", "editor_load",
+])
+def test_heavy_endpoints_are_sync(name):
+    """H1: tunge endepunkter må være `def` så de kjøres i trådpool, ikke på hendelsesløkken."""
+    import inspect
+    assert not inspect.iscoroutinefunction(getattr(main, name))
+
+
+def _price_adjust(client, pct, delivery_id="7.0"):
+    import json
+    from conftest import TEMPLATE_1076
+    r = client.post("/price-adjust", files={"osdm_file": ("1076.json", TEMPLATE_1076.read_bytes())}, data={
+        "pct": str(pct), "delivery_id": delivery_id, "valid_from": "2026-12-13", "valid_to": "2027-12-11",
+    })
+    assert r.status_code == 200, r.text
+    return json.loads(r.content)
+
+
+def _fare_price_map(data):
+    fs = data["fareDelivery"]["fareStructure"]
+    prices = {p["id"]: p["price"][0]["amount"] for p in fs["prices"]}
+    return {f["id"]: prices[f["priceRef"]] for f in fs["fares"]}
+
+
+def test_price_adjust_zero_percent_changes_nothing():
+    import json
+    from conftest import TEMPLATE_1076
+    client = _login("a@test.no")
+    original = _fare_price_map(json.loads(TEMPLATE_1076.read_bytes()))
+    assert _fare_price_map(_price_adjust(client, 0)) == original
+
+
+def test_price_adjust_new_delivery_id_keeps_references_valid():
+    """Regresjon for ID-mismatch-feilen fra juni 2026."""
+    client = _login("a@test.no")
+    out = _price_adjust(client, 5, delivery_id="7.1")
+    fs = out["fareDelivery"]["fareStructure"]
+    price_ids = {p["id"] for p in fs["prices"]}
+    assert all(f["priceRef"] in price_ids for f in fs["fares"])
+    assert all(pid.startswith("1076_7.1_") for pid in price_ids)
+    assert out["fareDelivery"]["delivery"]["deliveryId"] == "7.1"
+
+
+def test_fix_osdm_on_clean_template_removes_nothing():
+    from conftest import TEMPLATE_1076
+    client = _login("a@test.no")
+    r = client.post("/ui/fix-osdm", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())})
+    assert r.status_code == 200, r.text
+    assert all(v == 0 for v in r.json()["stats"].values())
+
+
+def _apply_discount(client, carrier_codes=()):
+    import json
+    from conftest import TEMPLATE_1076
+    data = {
+        "stationPairsJson": json.dumps([{"fromCpId": "1076_7.0_E__56", "toCpId": "1076_7.0_E__90"}]),
+        "discountName": "Testrabatt", "discountPct": "20",
+        "passengerRefs": ["1076_7.0_P__7"], "serviceClassIds": ["BASIC"],
+    }
+    if carrier_codes:
+        data["carrierCodes"] = list(carrier_codes)
+    r = client.post("/fare-discount/apply", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())}, data=data)
+    assert r.status_code == 200, r.text
+    original = json.loads(TEMPLATE_1076.read_bytes())["fareDelivery"]["fareStructure"]
+    out = json.loads(r.content)["fareDelivery"]["fareStructure"]
+    new_fares = out["fares"][len(original["fares"]):]
+    assert new_fares
+    return original, out, new_fares
+
+
+def test_discount_fares_keep_legacy_fields_and_carrier():
+    """H2: rabattfarer må ha legacy-feltene SilverRail trenger, og beholde originalens TCO/carrier."""
+    client = _login("a@test.no")
+    original, _, new_fares = _apply_discount(client)
+    template = next(f for f in original["fares"] if f["regionalConstraintRef"] == new_fares[0]["regionalConstraintRef"])
+    for f in new_fares:
+        assert "legacyAccountingIdentifier" in f and "legacyConversion" in f and "individualContracts" in f
+        assert f["involvedTCOs"] == template["involvedTCOs"]
+        assert f["carrierConstraintRef"] == template["carrierConstraintRef"]
+
+
+def test_discount_with_carriers_uses_new_carrier_constraint():
+    client = _login("a@test.no")
+    _, out, new_fares = _apply_discount(client, carrier_codes=["1186"])
+    new_cc = out["carrierConstraints"][-1]
+    assert new_cc["includedCarrier"] == ["1186"]
+    assert all(f["carrierConstraintRef"] == new_cc["id"] for f in new_fares)
+
+
+def test_discount_is_based_on_primary_fare_not_fip():
+    """M3: med vanlig + FIP-fare for samme kombinasjon skal rabatten regnes fra den høyeste."""
+    from backend.osdm_editor import round_up_020
+    client = _login("a@test.no")
+    original, out, new_fares = _apply_discount(client)
+    prices = {p["id"]: p["price"][0]["amount"] / 100 for p in out["prices"]}
+    for nf in new_fares:
+        candidates = [prices[f["priceRef"]] for f in original["fares"]
+                      if f["regionalConstraintRef"] == nf["regionalConstraintRef"]
+                      and f["passengerConstraintRef"] == nf["passengerConstraintRef"]
+                      and f["serviceClassRef"] == nf["serviceClassRef"]]
+        assert len(candidates) >= 1
+        assert prices[nf["priceRef"]] == round_up_020(max(candidates) * 0.8)
+
+
+def test_generate_reports_relations_not_covered_by_distance_file():
+    """H3: relasjoner utenfor avstandsfilen skal rapporteres, ikke hoppes stille over."""
+    import time
+    from conftest import TEMPLATE_1076
+
+    client = _login("b@test.no")
+    assert client.post("/ui/validate-ten", files={"tenFile": ("kort.csv", "0;50;100\n")}).json()["ok"]
+    job = client.post("/ui/validate-osdm", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())}).json()
+    for _ in range(100):
+        if client.get(f"/ui/validate-osdm/progress/{job['jobId']}").json()["status"] != "running":
+            break
+        time.sleep(0.1)
+
+    r = client.post("/ui/generate-osdm", data={
+        "exchangeRate": "0.087", "validFrom": "2026-12-13", "validTo": "2027-12-11",
+        "datasetId": "8.0", "environment": "test",
+    })
+    summary = r.json()["summary"]
+    assert summary["rcsSkipped"] > 0
+    assert 0 < len(summary["rcsSkippedExamples"]) <= 5
+    assert "km)" in summary["rcsSkippedExamples"][0]

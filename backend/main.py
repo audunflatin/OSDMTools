@@ -627,7 +627,7 @@ def _append_to_json_array(content: bytes, key: str, new_items: list) -> bytes:
     if not new_items:
         return content
     val_start, val_end = _find_section_span(content, key)
-    new_bytes = (b", " + b", ".join(json.dumps(item, ensure_ascii=False).encode() for item in new_items))
+    new_bytes = (b", " + b", ".join(json.dumps(item, ensure_ascii=False, default=_ijson_default).encode() for item in new_items))
     return content[:val_end - 1] + new_bytes + content[val_end - 1:]
 
 
@@ -841,7 +841,7 @@ def validate_osdm_progress(job_id: str, request: Request):
 # ---------------------------------------------------------------------
 
 @app.post("/ui/validate-distances")
-async def validate_distances(
+def validate_distances(
     request: Request,
     distanceFile: UploadFile = File(...),
     osdmFile: UploadFile = File(...),
@@ -850,7 +850,7 @@ async def validate_distances(
 
     # Parse TEN-format avstandsfil (fra_km;til_km;pris)
     try:
-        csv_text = (await distanceFile.read()).decode("utf-8-sig")
+        csv_text = (distanceFile.file.read()).decode("utf-8-sig")
     except Exception:
         return {"ok": False, "error": "Kunne ikke lese avstandsfilen"}
 
@@ -861,7 +861,7 @@ async def validate_distances(
 
     # Parse OSDM
     try:
-        data = json.loads(await osdmFile.read())
+        data = json.loads(osdmFile.file.read())
     except Exception:
         return {"ok": False, "error": "OSDM-filen er ikke gyldig JSON"}
 
@@ -1045,14 +1045,15 @@ def _generate_osdm(
     rcs = fs.get("regionalConstraints", [])
     total = len(rcs) or 1
     rc_adult_prices: dict[str, float] = {}
+    skipped_rcs: list[dict] = []  # RC-er som beholder malens priser (mangler avstand / ikke dekket av TEN)
     for idx, rc in enumerate(rcs, start=1):
         km = rc.get("distance")
-        if km is not None:
-            try:
-                local_price = nok_price_from_distance(ten_table, km)
-                rc_adult_prices[rc["id"]] = local_price * exchangeRate
-            except ValueError:
-                pass
+        try:
+            if km is None:
+                raise ValueError
+            rc_adult_prices[rc["id"]] = nok_price_from_distance(ten_table, km) * exchangeRate
+        except ValueError:
+            skipped_rcs.append(rc)
         progress["percent"] = int(idx / total * 60)
 
     # Set all prices using ratios inferred from the uploaded OSDM file
@@ -1062,6 +1063,15 @@ def _generate_osdm(
     # Build example fares from first few RCs that got prices
     cp_to_uic = store_entry["cp_to_uic"]
     station_name_map = store_entry["station_name_map"]
+
+    def _rc_label(rc: dict) -> str:
+        from_uic = cp_to_uic.get(rc.get("entryConnectionPointId", ""), "")
+        to_uic = cp_to_uic.get(rc.get("exitConnectionPointId", ""), "")
+        from_name = station_name_map.get(from_uic, from_uic or "?")
+        to_name = station_name_map.get(to_uic, to_uic or "?")
+        return f"{from_name} → {to_name} ({rc.get('distance', '?')} km)"
+
+    skipped_examples = [_rc_label(rc) for rc in skipped_rcs[:5]]
     examples: dict[str, str] = {}
     example_idx = 1
     for rc in rcs:
@@ -1101,6 +1111,7 @@ def _generate_osdm(
         "validTo": validTo,
         "updatedFares": result["updated_fares"],
         "newPrices": result["new_prices"],
+        "rcsSkipped": len(skipped_rcs),
     })
 
     return {
@@ -1113,6 +1124,8 @@ def _generate_osdm(
             "environment": environment,
             "utcOffset": utc_offset_from,
             "exampleFares": examples,
+            "rcsSkipped": len(skipped_rcs),
+            "rcsSkippedExamples": skipped_examples,
         },
     }
 
@@ -1778,13 +1791,13 @@ def osdm_to_xlsx_bytes(file_bytes: bytes, job_id: str = None, jobs: dict = None)
 
 
 @app.post("/frontend/osdm-to-csv")
-async def osdm_to_csv(
+def osdm_to_csv(
     request: Request,
     osdmFile: UploadFile = File(...),
 ):
     require_login(request)
 
-    content = await osdmFile.read()
+    content = osdmFile.file.read()
     print(f"Mottok fil: {osdmFile.filename}, størrelse: {len(content)} bytes")
 
     # Quick structure check with ijson (no full parse)
@@ -2159,8 +2172,11 @@ def price_adjust_page(request: Request):
     return HTMLResponse(html)
 
 
+# Tunge endepunkter er bevisst `def`, ikke `async def`: FastAPI kjører `def` i en
+# trådpool, mens `async def` kjører på hendelsesløkken og ville fryst hele serveren
+# for alle brukere mens filen behandles.
 @app.post("/price-adjust")
-async def price_adjust(
+def price_adjust(
     request: Request,
     osdm_file: UploadFile = File(...),
     pct: float = Form(...),
@@ -2175,7 +2191,7 @@ async def price_adjust(
     factor = 1 + pct / 100
 
     try:
-        content = await osdm_file.read()
+        content = osdm_file.file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
 
@@ -2543,7 +2559,7 @@ def _new_fare_id() -> str:
 
 
 @app.post("/fare-discount/apply")
-async def fare_discount_apply(
+def fare_discount_apply(
     request: Request,
     osdmFile: UploadFile = File(...),
     stationPairsJson: str = Form(...),
@@ -2556,7 +2572,7 @@ async def fare_discount_apply(
     require_login(request)
 
     try:
-        content = await osdmFile.read()
+        content = osdmFile.file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
 
@@ -2675,45 +2691,50 @@ async def fare_discount_apply(
         new_amount_to_price_id[discounted_int] = new_id
         return new_id
 
-    # --- Nye farer (stream fares, never load full array) ---
-    new_fares: list[dict] = []
-    seen_combos: set[tuple] = set()
+    # --- Velg grunnlagsfare per (RC, passasjerkategori, klasse) ---
+    # Filer som 1076 har flere farer per kombinasjon (vanlig + FIP). Rabatten skal
+    # beregnes fra primærfaren, dvs. den med høyest pris — ikke den som står først.
+    def _price_value(fare: dict) -> float:
+        p = price_lookup.get(fare.get("priceRef", ""))
+        return p["amount"] / (10 ** p.get("scale", 2)) if p else -1.0
 
+    base_fares: dict[tuple, dict] = {}
     for fare in ijson.items(io.BytesIO(content), "fareDelivery.fareStructure.fares.item"):
         rc_ref = fare.get("regionalConstraintRef")
         pc_ref = fare.get("passengerConstraintRef")
         sc_ref = fare.get("serviceClassRef")
-
-        if rc_ref not in matching_rc_ids:
+        if rc_ref not in matching_rc_ids or pc_ref not in selected_pc_ids or sc_ref not in serviceClassIds:
             continue
-        if pc_ref not in selected_pc_ids:
+        if fare.get("priceRef") not in price_lookup:
             continue
-        if sc_ref not in serviceClassIds:
-            continue
-
         key = (rc_ref, pc_ref, sc_ref)
-        if key in seen_combos:
-            continue
-        seen_combos.add(key)
+        if key not in base_fares or _price_value(fare) > _price_value(base_fares[key]):
+            base_fares[key] = fare
 
-        orig_price = price_lookup.get(fare.get("priceRef", ""))
-        if not orig_price:
-            continue
-
+    # --- Nye farer ---
+    new_fares: list[dict] = []
+    for (rc_ref, pc_ref, sc_ref), fare in base_fares.items():
         new_fare: dict = {
             "id": _new_fare_id(),
             "bundleRef": fare.get("bundleRef", ""),
             "fareType": fare.get("fareType", "ADMISSION"),
             "nameRef": new_text_id,
-            "priceRef": get_or_create_price_id(orig_price),
+            "priceRef": get_or_create_price_id(price_lookup[fare["priceRef"]]),
             "regionalConstraintRef": rc_ref,
             "regulatoryConditions": fare.get("regulatoryConditions", ["CIV"]),
             "serviceClassRef": sc_ref,
             "passengerConstraintRef": pc_ref,
-            "involvedTCOs": list(carrierCodes),
         }
-        if new_cc_id:
-            new_fare["carrierConstraintRef"] = new_cc_id
+        # Uten valgte transportører beholdes originalens begrensning, ellers ville
+        # rabatten gjelde for alle transportører.
+        carrier_ref = new_cc_id or fare.get("carrierConstraintRef")
+        if carrier_ref:
+            new_fare["carrierConstraintRef"] = carrier_ref
+        # SilverRail/OSDM-tool trenger legacy-feltene for konvertering til 108.1 (se CLAUDE.md).
+        for field in ("legacyAccountingIdentifier", "legacyConversion", "individualContracts"):
+            if field in fare:
+                new_fare[field] = fare[field]
+        new_fare["involvedTCOs"] = list(fare.get("involvedTCOs") or carrierCodes)
         new_fares.append(new_fare)
 
     if not new_fares:
@@ -2759,11 +2780,11 @@ def _ijson_default(obj):
 
 
 @app.post("/ui/fix-osdm")
-async def fix_osdm(request: Request, osdmFile: UploadFile = File(...)):
+def fix_osdm(request: Request, osdmFile: UploadFile = File(...)):
     require_login(request)
 
     try:
-        content = await osdmFile.read()
+        content = osdmFile.file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Filen kunne ikke leses")
 
@@ -2939,10 +2960,10 @@ def fix_osdm_page(request: Request):
 # ---------------------------------------------------------------------
 
 @app.post("/osdm-editor/load")
-async def editor_load(request: Request, osdmFile: UploadFile = File(...)):
+def editor_load(request: Request, osdmFile: UploadFile = File(...)):
     require_login(request)
     user_email = request.session["user_email"]
-    content = await osdmFile.read()
+    content = osdmFile.file.read()
     try:
         entry = osdm_editor.load_osdm(content)
     except Exception as e:
@@ -2991,7 +3012,7 @@ async def editor_passenger(request: Request, pc_id: str):
         new_ratio = float(new_ratio)
     except (TypeError, ValueError):
         raise HTTPException(status_code=422, detail="ratio må være et tall")
-    result = osdm_editor.update_passenger_ratio(entry, pc_id, new_ratio)
+    result = await run_in_threadpool(osdm_editor.update_passenger_ratio, entry, pc_id, new_ratio)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     log_event(user_email, "editor_passenger", detail=result)
@@ -3015,7 +3036,7 @@ async def editor_relation(request: Request):
         raise HTTPException(status_code=422, detail=f"Ugyldig input: {e}")
     if adult_price_eur <= 0 or distance < 0:
         raise HTTPException(status_code=422, detail="Pris må være > 0 og avstand >= 0")
-    result = osdm_editor.add_relation(entry, from_uic, to_uic, adult_price_eur, distance)
+    result = await run_in_threadpool(osdm_editor.add_relation, entry, from_uic, to_uic, adult_price_eur, distance)
     log_event(user_email, "editor_relation", detail=result)
     return result
 

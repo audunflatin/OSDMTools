@@ -180,6 +180,8 @@ const translations = {
     label_valid_period:  "Gyldig periode",
     label_summer_time:   "Sommertid",
     label_price_count:   "Antall priser",
+    rcs_skipped_warning: "{count} relasjon(er) fikk ikke ny pris og beholder malens gamle priser. Sjekk at avstandsfilen dekker alle avstander:",
+    and_n_more:          "… og {n} til",
     err_osdm_failed:     "OSDM kunne ikke genereres",
 
 
@@ -559,6 +561,8 @@ const translations = {
     label_valid_period:  "Valid period",
     label_summer_time:   "Summer time",
     label_price_count:   "Number of prices",
+    rcs_skipped_warning: "{count} relation(s) did not get a new price and keep the template's old prices. Check that the distance file covers all distances:",
+    and_n_more:          "… and {n} more",
     err_osdm_failed:     "OSDM could not be generated",
 
     // Example prices – app.js
@@ -939,6 +943,8 @@ const translations = {
     label_valid_period:  "Gültigkeitszeitraum",
     label_summer_time:   "Sommerzeit",
     label_price_count:   "Anzahl Preise",
+    rcs_skipped_warning: "{count} Relation(en) haben keinen neuen Preis erhalten und behalten die alten Preise der Vorlage. Prüfen Sie, ob die Entfernungsdatei alle Entfernungen abdeckt:",
+    and_n_more:          "… und {n} weitere",
     err_osdm_failed:     "OSDM konnte nicht generiert werden",
 
 
@@ -1318,6 +1324,8 @@ const translations = {
     label_valid_period:  "Giltig period",
     label_summer_time:   "Sommartid",
     label_price_count:   "Antal priser",
+    rcs_skipped_warning: "{count} relation(er) fick inget nytt pris och behåller mallens gamla priser. Kontrollera att avståndsfilen täcker alla avstånd:",
+    and_n_more:          "… och {n} till",
     err_osdm_failed:     "OSDM kunde inte genereras",
 
 
@@ -1697,6 +1705,8 @@ const translations = {
     label_valid_period:  "Période de validité",
     label_summer_time:   "Heure d'été",
     label_price_count:   "Nombre de prix",
+    rcs_skipped_warning: "{count} relation(s) n'ont pas reçu de nouveau prix et conservent les anciens prix du modèle. Vérifiez que le fichier de distances couvre toutes les distances :",
+    and_n_more:          "… et {n} de plus",
     err_osdm_failed:     "L'OSDM n'a pas pu être généré",
 
     // Exemples de prix

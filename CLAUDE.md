@@ -40,6 +40,8 @@ Ikke bruk betingede grenser basert på `localhost` vs. produksjon. Deutsche Bahn
 **Tung prosessering skal bruke async job-mønster.**
 Nye endepunkter som gjør tung prosessering (JSON-parse av store filer, validering, konvertering) skal starte en bakgrunnstråd og returnere et `jobId` som frontend poller via et eget progress-endepunkt. Se `XLSX_JOBS`, `VALIDATION_JOBS`, `PARSE_JOBS` i `backend/main.py` for mønster.
 
+**Tunge endepunkter skal være `def`, aldri `async def`.** FastAPI kjører `async def` på hendelsesløkken — tung synkron kode der fryser hele serveren for alle brukere. Bruk `fil.file.read()` i stedet for `await fil.read()`. Trenger du `await request.json()`, behold `async def` og kjør tungt arbeid med `await run_in_threadpool(...)`. `test_heavy_endpoints_are_sync` vokter dette.
+
 ---
 
 ## Sider og ansvarlige filer
@@ -115,6 +117,8 @@ Algoritme: grupper fares etter (RC, carrier, bundle) → maks = voksen → skale
 | 5 | `GET /ui/download-osdm/{filename}` | Serverer `OSDM_STORE[user_email]` (krever innlogging) |
 | 6 | `POST /ui/excel-from-generated` | Konverterer `OSDM_STORE[user_email]` til Excel (async) |
 
+Genereringsresultatet rapporterer `rcsSkipped` / `rcsSkippedExamples`: RC-er uten avstand eller utenfor avstandsfilen beholder malens gamle priser, og frontend viser en advarsel.
+
 ### Delivery-felt som settes ved generering
 - `deliveryId` — ny ID (brukes i alle ID-er via string-replace)
 - `previousDeliveryId` — forrige leveranse-ID (valgfri)
@@ -145,6 +149,11 @@ Algoritme: grupper fares etter (RC, carrier, bundle) → maks = voksen → skale
 - `passengerRefs[]`, `serviceClassIds[]` — hvilke kategorier og klasser rabatten gjelder
 
 Backend samler RC-er fra **alle** par og lager priser for samtlige kombinasjoner av RC × passasjerkategori × serviceklasse.
+
+Nye rabattfarer:
+- Bygger på **primærfaren** (høyest pris) per (RC, PC, klasse), ikke første fare — ellers kan FIP-prisen bli grunnlaget.
+- Kopierer `legacyAccountingIdentifier`, `legacyConversion`, `individualContracts` og `involvedTCOs` fra grunnlagsfaren (SilverRail trenger legacy-feltene).
+- Uten valgte transportører beholdes grunnlagsfarens `carrierConstraintRef`; med valgte lages en ny carrierConstraint.
 
 ---
 
@@ -277,8 +286,8 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 | Fil | Versjon |
 |---|---|
 | `styles.css` | v=27 |
-| `i18n.js` | v=55 (alle hovudsider) / v=19 (login-sider) |
-| `app.js` | v=22 |
+| `i18n.js` | v=56 (alle hovudsider) / v=19 (login-sider) |
+| `app.js` | v=23 |
 | `admin.js` | v=21 |
 | `admin-log.js` | v=4 |
 | `osdmtoExcel.js` | v=7 |
@@ -292,7 +301,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 Ved endringer i statiske filer: bump versjonsnummeret i **alle**
 HTML-filer som laster den aktuelle filen.
 
-HTML-filer som laster `i18n.js` med v=55:
+HTML-filer som laster `i18n.js` med v=56:
 `landing.html`, `index.html`, `admin.html`, `admin-log.html`, `fare-discount.html`,
 `contact.html`, `endre-passord.html`, `min-konto.html`, `osdmtoexcel.html`, `price-adjust.html`, `fix-osdm.html`, `osdm-editor.html`, `station-lookup.html`
 

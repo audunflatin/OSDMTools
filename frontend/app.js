@@ -323,6 +323,16 @@ async function generateOsdm(){
       `${t("label_summer_time")}: ${sommertid}\n` +
       `${t("label_price_count")}: ${res.summary.pricesUpdated}`;
 
+    // Relasjoner avstandsfilen ikke dekker beholder malens gamle priser
+    if (res.summary.rcsSkipped > 0) {
+      finalStatus.innerText +=
+        `\n\n⚠ ${t("rcs_skipped_warning").replace("{count}", res.summary.rcsSkipped)}\n` +
+        res.summary.rcsSkippedExamples.map(e => `  • ${e}`).join("\n") +
+        (res.summary.rcsSkipped > res.summary.rcsSkippedExamples.length
+          ? `\n  • ${t("and_n_more").replace("{n}", res.summary.rcsSkipped - res.summary.rcsSkippedExamples.length)}`
+          : "");
+    }
+
     finalStatus.className = "result-text";
     document.getElementById("resultBox").style.display = "block";
     downloadBtn.disabled = false;
