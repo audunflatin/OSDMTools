@@ -10,6 +10,15 @@ Rask referanse for Claude. Detaljert arkitektur og kontekst: `CONTEXT_PopToOSDM.
 .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
+## Tester
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt   # første gang
+.venv/bin/python -m pytest -q tests
+```
+
+`tests/test_pricing.py` bruker 1076-malen som fasit (avrunding, ratioer, ingen prisdrift, FIP-proporsjoner). `tests/test_api.py` kjører mot en midlertidig SQLite-database, aldri `users.db`. **Kjør testene etter hver endring i prislogikken.**
+
 ---
 
 ## Viktig: Når du legger til en ny tjeneste
@@ -61,7 +70,7 @@ Felles styling: `styles.css`. Flerspråklig: `i18n.js` (lastes før side-spesifi
 Definert øverst i `backend/main.py`:
 
 ```python
-TEN_TABLE: list | None         # Lastes ved POST /ui/validate-ten — brukes av generate
+TEN_STORE: dict                # user_email → {"table": [(fra_km, til_km, pris)], "created_at": float}
 OSDM_STORE: dict               # user_email → {"filename": str, "content": str, "created_at": float}
 INPUT_OSDM_STORE: dict         # user_email → {"filename": str, "bytes": bytes, "created_at": float}
 FIX_OSDM_STORE: dict           # user_email → {"filename": str, "content": bytes, "created_at": float}
@@ -69,15 +78,15 @@ EDIT_STORE: dict               # user_email → osdm_editor store entry + {"file
 XLSX_JOBS: dict                # job_id → {status, result, percent, user_email, ...}
 VALIDATION_JOBS: dict          # job_id → {status, result, percent, user_email, ...}
 PARSE_JOBS: dict               # job_id → {status, result, percent, user_email, ...}
-GENERATION_PROGRESS: dict      # {"status": ..., "percent": ...} for progressbar
+GENERATION_PROGRESS: dict      # user_email → {"status", "percent", "created_at"} for progressbar
 ```
 
-**Viktig:** `OSDM_STORE`, `INPUT_OSDM_STORE` og `FIX_OSDM_STORE` er per bruker (keyed på `user_email`) — to brukere kan generere OSDM samtidig uten konflikt. Alle job-dicts lagrer `user_email`; progress- og download-endepunkter sjekker eierskap (403 hvis annen bruker).
+**Viktig:** All tilstand er per bruker (keyed på `user_email`) — også `TEN_STORE` og `GENERATION_PROGRESS` (var felles før november 2026). `OSDM_STORE`, `INPUT_OSDM_STORE` og `FIX_OSDM_STORE` er per bruker (keyed på `user_email`) — to brukere kan generere OSDM samtidig uten konflikt. Alle job-dicts lagrer `user_email`; progress- og download-endepunkter sjekker eierskap (403 hvis annen bruker).
 
 **Konsekvens:** TEN-filen og OSDM-malfilen må valideres i riktig rekkefølge per server-sesjon.
 Ingenting skrives til disk under generering.
 
-En bakgrunnstråd rydder alle syv stores eldre enn 2 timer hvert 10. minutt (`XLSX_JOBS`, `VALIDATION_JOBS`, `PARSE_JOBS`, `OSDM_STORE`, `INPUT_OSDM_STORE`, `FIX_OSDM_STORE`, `EDIT_STORE`).
+En bakgrunnstråd rydder alle stores eldre enn 2 timer hvert 10. minutt (`XLSX_JOBS`, `VALIDATION_JOBS`, `PARSE_JOBS`, `OSDM_STORE`, `INPUT_OSDM_STORE`, `FIX_OSDM_STORE`, `EDIT_STORE`, `TEN_STORE`, `GENERATION_PROGRESS`).
 
 ---
 
@@ -99,10 +108,10 @@ Algoritme: grupper fares etter (RC, carrier, bundle) → maks = voksen → skale
 
 | # | Kall | Handling |
 |---|---|---|
-| 1 | `POST /ui/validate-ten` | Parser TEN-CSV, lagrer i `TEN_TABLE` |
+| 1 | `POST /ui/validate-ten` | Parser TEN-CSV, lagrer i `TEN_STORE[user_email]` |
 | 2 | `POST /ui/validate-osdm` | Validerer struktur, lagrer råbytes i `INPUT_OSDM_STORE[user_email]`, returnerer warnings + deliveryId |
 | 3 | `GET /ui/exchange-rate?from_=EUR&to=NOK` | Henter kurs fra frankfurter.app (ECB) |
-| 4 | `POST /ui/generate-osdm` | Bruker `TEN_TABLE` + `INPUT_OSDM_STORE[user_email]` (ingen hardkodet template), lagrer i `OSDM_STORE[user_email]` |
+| 4 | `POST /ui/generate-osdm` | Bruker `TEN_STORE[user_email]` + `INPUT_OSDM_STORE[user_email]` (ingen hardkodet template), lagrer i `OSDM_STORE[user_email]` |
 | 5 | `GET /ui/download-osdm/{filename}` | Serverer `OSDM_STORE[user_email]` (krever innlogging) |
 | 6 | `POST /ui/excel-from-generated` | Konverterer `OSDM_STORE[user_email]` til Excel (async) |
 
@@ -201,7 +210,7 @@ Frontend (`fixOsdm.js`): viser oppsummering av hva som vil bli fjernet, med "Las
 
 ID-mønster: `{fareProvider}_{deliveryId}_{typekode}__{nr}` — typekoder: E=connectionPoint, K=regionalConstraint, I=price, G=passengerConstraint, C=carrierConstraint, S=bundle
 
-**Ratio-innsikt (viktig):** Ratio er IKKE lagret i OSDM-filer — den utledes ved å dele passasjerkategoriens pris på voksenprisen. Voksen = passasjerkategori med høyest gjennomsnittlig pris (beregnet fra primærfarer, ikke FIP-farer). `osdm_editor.load_osdm()` gjør dette automatisk og lagrer `adult_id` og `ratios` i store_entry.
+**Ratio-innsikt (viktig):** Ratio er IKKE lagret i OSDM-filer — den utledes fra passasjerkategoriens pris og voksenprisen. **Ikke bruk snittet av pris/voksen:** prisene er rundet opp, så snittet blir skjevt oppover (0,2516 i stedet for 0,25) og gir prisdrift ved hver generering (rettet november 2026). `_infer_ratio` bruker at `pris − 0,20 < voksen × r ≤ pris` for alle relasjoner, og velger den «runde» verdien i fellesmengden av intervallene. 1076: barn 0,25, honnør 0,5, gruppevoksen 0,9 (bekreftet av brukeren). Voksen = passasjerkategori med høyest gjennomsnittlig pris (beregnet fra primærfarer, ikke FIP-farer). `osdm_editor.load_osdm()` gjør dette automatisk og lagrer `adult_id` og `ratios` i store_entry.
 
 **stationNames-format varierer per operatør:**
 - De fleste: `{"code": "8311705", "codeList": "UIC", ...}`
@@ -269,8 +278,8 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 |---|---|
 | `styles.css` | v=27 |
 | `i18n.js` | v=55 (alle hovudsider) / v=19 (login-sider) |
-| `app.js` | v=21 |
-| `admin.js` | v=20 |
+| `app.js` | v=22 |
+| `admin.js` | v=21 |
 | `admin-log.js` | v=4 |
 | `osdmtoExcel.js` | v=7 |
 | `fareDiscount.js` | v=18 |
@@ -311,6 +320,7 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 ## Sikkerhet – viktige mekanismer
 
 - **SESSION_SECRET**: logger advarsel ved oppstart hvis standardverdi brukes (ikke satt i env).
+- **Ingen inline `onclick` med data fra brukere** — admin.js bruker `data-action`/`data-email` + én delegert click-listener. `escapeHtml` i en `onclick`-streng beskytter ikke (HTML-entiteter dekodes før JS kjøres). E-post valideres på serveren med `_valid_email()` i `/request-access` og `/admin/add-user`.
 - **CORS**: `ALLOWED_ORIGINS` begrenser til `APP_URL` + localhost (settes i `backend/core/settings.py`).
 - **Job-eierskap**: alle job-dicts (`XLSX_JOBS`, `VALIDATION_JOBS`, `PARSE_JOBS`) lagrer `user_email`. Progress- og download-endepunkter returnerer 403 hvis feil bruker spør.
 - **Job-cleanup**: bakgrunnstråd sletter jobber eldre enn 2 timer hvert 10. minutt.
@@ -323,9 +333,9 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 
 ## Kjente fallgruver
 
-- **`TEN_TABLE` er None etter serverrestart** — brukeren må validere TEN-filen på nytt. Tilsvarende for `INPUT_OSDM_STORE`. Dette er by design (stateless storage mellom requests, men state lever i server-prosessen).
+- **`TEN_STORE` er tom etter serverrestart** — brukeren må validere TEN-filen på nytt. Tilsvarende for `INPUT_OSDM_STORE`. Dette er by design (stateless storage mellom requests, men state lever i server-prosessen).
 - **`import requests` var lenge glemt** i `main.py` (lagt til mai 2026). Valutahenting feilet stille.
-- **Priser rundes opp til nærmeste 0,20 EUR** (`math.ceil(eur / 0.20) * 0.20`). Dette er DRTF-krav.
+- **Priser rundes opp til nærmeste 0,20 EUR** — DRTF-krav. **Bruk alltid `osdm_editor.round_up_020()`**, aldri `math.ceil(eur / 0.20) * 0.20`: flyttall gjør at f.eks. 12.600000000000001 rundes til 12,80.
 - **String-replace på serialisert JSON** brukes til å bytte id-prefix overalt i generate_osdm — treffer alle ID-typer uten manuell iterasjon, men betyr at old_prefix ikke kan være delstreng av noe annet i filen.
 - **FIP-farer med `has_reduction = false`** — NSB 1076 har FIP-farer (nameRef P__5) som IKKE har `reductionConstraintRef`. De er ikke filtrerbare som "rabatt-farer" — de ser ut som vanlige farer og skaper duplikat-nøkler. Se eget avsnitt over.
 - **`_find_adult_id` kan velge feil PC** — hvis en PC har to farer med svært ulike priser (f.eks. vanlig og FIP), reduseres gjennomsnittet slik at en annen PC (f.eks. gruppevoksen med ~0,9× pris) kan få høyere snitt og bli valgt som "voksen". Løst med maks-pris per (rc, carrier, sc, pc)-gruppe.

@@ -10,7 +10,7 @@ function setResult(el, text, ok) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
 
 function renderPendingRequests(pending) {
@@ -42,9 +42,9 @@ function renderPendingRequests(pending) {
       <td style="padding:6px 8px; color:var(--muted-text-alt); font-size:0.83rem;">${date}</td>
       <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
         <button class="btn-table" style="color:#5ac39a; border-color:rgba(90,195,154,0.35);"
-          onclick="approveRequest('${escapeHtml(r.email)}')">${t("btn_approve")}</button>
+          data-action="approve" data-email="${escapeHtml(r.email)}">${t("btn_approve")}</button>
         <button class="btn-table" style="margin-left:6px; opacity:0.55;"
-          onclick="rejectRequest('${escapeHtml(r.email)}')">${t("btn_reject")}</button>
+          data-action="reject" data-email="${escapeHtml(r.email)}">${t("btn_reject")}</button>
       </td>
     </tr>`;
   }).join("");
@@ -143,8 +143,8 @@ function renderUserList() {
           <td style="text-align:center; padding:6px 8px; color:var(--text-muted);">${u.is_admin ? SVG_CHECK : "-"}</td>
           <td style="text-align:center; padding:6px 8px; color:var(--text-muted);">${activeCell}</td>
           <td style="text-align:right; padding:6px 8px;">
-            <button class="btn-icon" onclick="setAdmin('${u.email}', ${!u.is_admin})" title="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" aria-label="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" style="margin-left:6px;">${u.is_admin ? "★" : "☆"}</button>
-            <button class="btn-table btn-danger" onclick="deleteUser('${u.email}')" style="margin-left:6px;">${t("btn_delete")}</button>
+            <button class="btn-icon" data-action="set-admin" data-email="${escapeHtml(u.email)}" data-make-admin="${!u.is_admin}" title="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" aria-label="${u.is_admin ? t("btn_remove_admin") : t("btn_make_admin")}" style="margin-left:6px;">${u.is_admin ? "★" : "☆"}</button>
+            <button class="btn-table btn-danger" data-action="delete" data-email="${escapeHtml(u.email)}" style="margin-left:6px;">${t("btn_delete")}</button>
           </td>
         </tr>`;
     }).join("");
@@ -249,3 +249,17 @@ document.getElementById("addUserForm").onsubmit = async e => {
 
 loadUserList();
 loadPendingRequests();
+
+// Knapper i tabellene bruker data-attributter i stedet for inline onclick,
+// slik at e-postadresser aldri tolkes som JavaScript.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn) return;
+  const email = btn.dataset.email;
+  switch (btn.dataset.action) {
+    case "approve":   approveRequest(email); break;
+    case "reject":    rejectRequest(email); break;
+    case "set-admin": setAdmin(email, btn.dataset.makeAdmin === "true"); break;
+    case "delete":    deleteUser(email); break;
+  }
+});

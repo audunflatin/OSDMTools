@@ -3,7 +3,7 @@ OSDM Editor – parse, analyser og modifiser OSDM fareDelivery-filer.
 
 Designprinsipper:
 - Priser er absolutte EUR-beløp (ikke ratio-felt i selve filen).
-- Ratio utledes fra eksisterende priser: avg(type_pris) / avg(voksen_pris).
+- Ratio utledes fra eksisterende priser (se _infer_ratio).
 - Voksen = passasjertype med høyest gjennomsnittlig ikke-null pris.
 - Priser = 0 (FIP, gratis) røres aldri ved recalkulering.
 - Nye priser rundes opp til nærmeste 0,20 EUR (DRTF-krav).
@@ -46,10 +46,19 @@ def _get_price_eur(price_entry: dict) -> float:
     return 0.0
 
 
-def _round_to_20_cents(eur: float) -> float:
+def round_up_020(eur: float) -> float:
+    """Rund opp til nærmeste 0,20 EUR (DRTF-krav).
+
+    Regner i hele cent: `math.ceil(eur / 0.20)` alene runder f.eks.
+    12.600000000000001 opp til 12,80 pga. flyttallsunøyaktighet.
+    """
     if eur <= 0:
         return 0.0
-    return math.ceil(eur / 0.20) * 0.20
+    cents = round(eur * 100, 6)
+    return math.ceil(cents / 20) * 20 / 100
+
+
+_round_to_20_cents = round_up_020
 
 
 def _eur_to_amount_int(eur: float, scale: int = 2) -> int:
@@ -187,8 +196,30 @@ def _find_adult_id(pcs: list, fares: list, price_map: dict) -> str:
     return best_id or ""
 
 
+def _infer_ratio(pairs: list[tuple[float, float]]) -> float:
+    """Utled ratio fra (voksenpris, kategoripris)-par.
+
+    Prisene er rundet opp til nærmeste 0,20 EUR, så den sanne ratioen r må
+    oppfylle  pris - 0,20 < voksen × r <= pris  for hver relasjon. Snittet av
+    pris/voksen er derfor skjevt oppover (f.eks. 0,2516 i stedet for 0,25),
+    og gir prisdrift ved neste generering. I stedet tar vi fellesmengden av alle
+    intervallene og velger den «runde» verdien (færrest desimaler) innenfor.
+    Hvis prisene ikke passer med opprundingsregelen, brukes snittet.
+    """
+    eps = 1e-9
+    upper = min(c / a for a, c in pairs)
+    lower = max((c - 0.20) / a for a, c in pairs)
+    if lower > upper + eps:
+        return sum(c / a for a, c in pairs) / len(pairs)
+    for decimals in range(0, 5):
+        r = round(upper, decimals)
+        if lower - eps <= r <= upper + eps and r >= 0:
+            return r
+    return upper
+
+
 def _compute_ratios(adult_id: str, pcs: list, fares: list, price_map: dict) -> dict[str, float]:
-    """Beregn gjennomsnittlig ratio per passasjertype relativt til voksenpris."""
+    """Utled ratio per passasjertype relativt til voksenpris."""
     # Grupper farer etter (rc, carrier, sc) → {pc_id: pris}
     groups: dict[tuple, dict[str, float]] = {}
     for fare in fares:
@@ -210,20 +241,15 @@ def _compute_ratios(adult_id: str, pcs: list, fares: list, price_map: dict) -> d
         if pc_id not in groups[key] or eur > groups[key][pc_id]:
             groups[key][pc_id] = eur
 
-    ratio_sum: dict[str, float] = {}
-    ratio_cnt: dict[str, int] = {}
+    pairs: dict[str, list[tuple[float, float]]] = {}
     for pc_prices in groups.values():
         adult_price = pc_prices.get(adult_id)
         if not adult_price or adult_price <= 0:
             continue
         for pc_id, price in pc_prices.items():
-            r = price / adult_price
-            ratio_sum[pc_id] = ratio_sum.get(pc_id, 0.0) + r
-            ratio_cnt[pc_id] = ratio_cnt.get(pc_id, 0) + 1
+            pairs.setdefault(pc_id, []).append((adult_price, price))
 
-    ratios: dict[str, float] = {}
-    for pc_id in ratio_sum:
-        ratios[pc_id] = ratio_sum[pc_id] / ratio_cnt[pc_id]
+    ratios: dict[str, float] = {pc_id: _infer_ratio(p) for pc_id, p in pairs.items()}
     ratios[adult_id] = 1.0
     for pc in pcs:
         if pc["id"] not in ratios:

@@ -11,6 +11,7 @@ import decimal
 import io
 import json
 import math
+import re
 
 import base64
 import threading
@@ -108,8 +109,8 @@ def _check_access_rate_limit(ip: str):
 # State
 # ---------------------------------------------------------------------
 
-TEN_TABLE = None
-GENERATION_PROGRESS = {"status": "idle", "percent": 0}
+TEN_STORE: dict[str, dict] = {}        # user_email → {"table": list[(fra_km, til_km, pris)], "created_at": float}
+GENERATION_PROGRESS: dict[str, dict] = {}  # user_email → {"status": str, "percent": int, "created_at": float}
 OSDM_STORE: dict[str, dict] = {}       # user_email → {"filename": str, "content": str}
 INPUT_OSDM_STORE: dict[str, dict] = {} # user_email → {"filename": str, "bytes": bytes, "created_at": float}
 FIX_OSDM_STORE: dict[str, dict] = {}  # user_email → {"filename": str, "content": bytes}
@@ -124,12 +125,19 @@ def _cleanup_jobs():
     while True:
         time.sleep(600)
         cutoff = time.time() - _JOB_TTL
-        for jobs in (XLSX_JOBS, VALIDATION_JOBS, PARSE_JOBS, OSDM_STORE, INPUT_OSDM_STORE, FIX_OSDM_STORE, EDIT_STORE):
+        for jobs in (XLSX_JOBS, VALIDATION_JOBS, PARSE_JOBS, OSDM_STORE, INPUT_OSDM_STORE, FIX_OSDM_STORE, EDIT_STORE,
+                     TEN_STORE, GENERATION_PROGRESS):
             stale = [k for k, v in list(jobs.items()) if v.get("created_at", 0) < cutoff]
             for k in stale:
                 jobs.pop(k, None)
 
 threading.Thread(target=_cleanup_jobs, daemon=True).start()
+
+
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+def _valid_email(email: str) -> bool:
+    return len(email) <= 254 and bool(_EMAIL_RE.match(email))
 
 
 def _safe_filename(name: str) -> str:
@@ -481,16 +489,16 @@ def validate_ten_csv(text: str):
 @app.post("/ui/validate-ten")
 def validate_ten(request: Request, tenFile: UploadFile = File(...)):
     require_login(request)
-    global TEN_TABLE
+    user_email = request.session["user_email"]
 
     content = tenFile.file.read().decode("utf-8-sig")
     result = validate_ten_csv(content)
 
     if not result["ok"]:
-        TEN_TABLE = None
+        TEN_STORE.pop(user_email, None)
         return {"ok": False, "error": result["error"]}
 
-    TEN_TABLE = result["table"]
+    TEN_STORE[user_email] = {"table": result["table"], "created_at": time.time()}
     return {"ok": True}
 
 
@@ -911,16 +919,11 @@ def exchange_rate(request: Request, from_: str = "EUR", to: str = "NOK"):
 # Price helpers
 # ---------------------------------------------------------------------
 
-def nok_price_from_distance(km: int):
-    for frm, to, price in TEN_TABLE:
+def nok_price_from_distance(ten_table: list, km: int):
+    for frm, to, price in ten_table:
         if frm <= km <= to:
             return price
     raise ValueError(f"Ingen TEN-pris for {km} km")
-
-def eur_amount(nok: int, rate: float):
-    eur = nok * rate
-    eur_rounded = math.ceil(eur / 0.20) * 0.20
-    return int(eur_rounded * 100)
 
 # ---------------------------------------------------------------------
 # Generate OSDM
@@ -941,15 +944,31 @@ def generate_osdm(
 
     user_email = request.session.get("user_email", "")
 
-    if TEN_TABLE is None:
+    ten_entry = TEN_STORE.get(user_email)
+    if not ten_entry:
         raise HTTPException(status_code=400, detail="TEN-CSV er ikke validert")
 
     input_entry = INPUT_OSDM_STORE.get(user_email)
     if not input_entry:
         raise HTTPException(status_code=400, detail="OSDM-malfil er ikke lastet opp og validert")
 
-    GENERATION_PROGRESS["status"] = "running"
-    GENERATION_PROGRESS["percent"] = 0
+    progress = {"status": "running", "percent": 0, "created_at": time.time()}
+    GENERATION_PROGRESS[user_email] = progress
+    try:
+        return _generate_osdm(
+            user_email, ten_entry["table"], input_entry, progress,
+            exchangeRate, validFrom, validTo, datasetId, environment, optionalDelivery, previousDeliveryId,
+        )
+    finally:
+        if progress["status"] == "running":
+            progress["status"] = "error"
+
+
+def _generate_osdm(
+    user_email: str, ten_table: list, input_entry: dict, progress: dict,
+    exchangeRate: float, validFrom: str, validTo: str, datasetId: str,
+    environment: str, optionalDelivery: str, previousDeliveryId: str,
+):
 
     store_entry = osdm_editor.load_osdm(input_entry["bytes"])
     data = store_entry["data"]
@@ -985,15 +1004,15 @@ def generate_osdm(
         km = rc.get("distance")
         if km is not None:
             try:
-                local_price = nok_price_from_distance(km)
+                local_price = nok_price_from_distance(ten_table, km)
                 rc_adult_prices[rc["id"]] = local_price * exchangeRate
             except ValueError:
                 pass
-        GENERATION_PROGRESS["percent"] = int(idx / total * 60)
+        progress["percent"] = int(idx / total * 60)
 
     # Set all prices using ratios inferred from the uploaded OSDM file
     result = osdm_editor.set_prices_from_adult(store_entry, rc_adult_prices)
-    GENERATION_PROGRESS["percent"] = 90
+    progress["percent"] = 90
 
     # Build example fares from first few RCs that got prices
     cp_to_uic = store_entry["cp_to_uic"]
@@ -1010,7 +1029,7 @@ def generate_osdm(
         to_uic = cp_to_uic.get(rc.get("exitConnectionPointId", ""), "")
         from_name = station_name_map.get(from_uic, from_uic or "?")
         to_name = station_name_map.get(to_uic, to_uic or "?")
-        adult_eur = math.ceil(rc_adult_prices[rc_id] / 0.20) * 0.20
+        adult_eur = osdm_editor.round_up_020(rc_adult_prices[rc_id])
         examples[f"example_{example_idx}"] = (
             f"{from_name} → {to_name}: {adult_eur:.2f} EUR ({rc.get('distance', '?')} km)"
         )
@@ -1024,8 +1043,8 @@ def generate_osdm(
     if old_prefix != new_prefix:
         content = content.replace(old_prefix, new_prefix)
 
-    GENERATION_PROGRESS["status"] = "done"
-    GENERATION_PROGRESS["percent"] = 100
+    progress["status"] = "done"
+    progress["percent"] = 100
 
     filename = _safe_filename(f"{fare_provider}_{datasetId}_{environment}.json")
     OSDM_STORE[user_email] = {"filename": filename, "content": content, "created_at": time.time()}
@@ -1058,8 +1077,10 @@ def generate_osdm(
 # ---------------------------------------------------------------------
 
 @app.get("/ui/progress")
-def get_progress():
-    return GENERATION_PROGRESS
+def get_progress(request: Request):
+    require_login(request)
+    p = GENERATION_PROGRESS.get(request.session["user_email"], {"status": "idle", "percent": 0})
+    return {"status": p["status"], "percent": p["percent"]}
 
 @app.post("/ui/excel-from-generated")
 def excel_from_generated(request: Request):
@@ -1152,7 +1173,9 @@ def admin_add_user(
     last_name: str = Form(""),
 ):
     require_admin(request)
-    email = email.lower()
+    email = email.strip().lower()
+    if not _valid_email(email):
+        raise HTTPException(status_code=400, detail="Ugyldig e-postadresse")
     db = SessionLocal()
     try:
         if db.query(User).filter(User.email == email).first():
@@ -2027,6 +2050,8 @@ def request_access(
     ip = _get_client_ip(request)
     _check_access_rate_limit(ip)
     email_clean      = email.strip().lower()
+    if not _valid_email(email_clean):
+        raise HTTPException(status_code=400, detail="invalid_email")
     first_name_clean = first_name.strip()
     last_name_clean  = last_name.strip()
     name_clean       = f"{first_name_clean} {last_name_clean}".strip()
@@ -2139,7 +2164,7 @@ async def price_adjust(
         max_eur = max(eur for _, eur in group_fares)
         if max_eur <= 0:
             continue
-        new_adult_eur = math.ceil(max_eur * factor / 0.20) * 0.20
+        new_adult_eur = osdm_editor.round_up_020(max_eur * factor)
         for price_ref, eur in group_fares:
             if eur <= 0:
                 new_eur_amounts[price_ref] = 0.0
@@ -2147,7 +2172,7 @@ async def price_adjust(
                 new_eur_amounts[price_ref] = new_adult_eur
             else:
                 ratio = eur / max_eur
-                new_eur_amounts[price_ref] = math.ceil(new_adult_eur * ratio / 0.20) * 0.20
+                new_eur_amounts[price_ref] = osdm_editor.round_up_020(new_adult_eur * ratio)
 
     # Oppdater prices-lista (skriver tilbake som skalert heltall)
     for price in prices:
@@ -2405,9 +2430,7 @@ def fare_discount_parse_progress(job_id: str, request: Request):
 # Hjelpefunksjoner for fare-discount/apply
 # ---------------------------------------------------------------------------
 
-def _round_up_020(eur: float) -> float:
-    """Rund opp til nærmeste 0.20 EUR."""
-    return math.ceil(eur / 0.20) * 0.20
+_round_up_020 = osdm_editor.round_up_020
 
 
 def _id_base(data: dict) -> str:

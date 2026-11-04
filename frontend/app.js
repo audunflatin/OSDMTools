@@ -378,7 +378,7 @@ function startProgress(){
   const t_ = setInterval(async () => {
     const p = await (await fetch("/ui/progress")).json();
     bar.value = p.percent;
-    if(p.status === "done"){ clearInterval(t_); bar.style.display = "none"; }
+    if(p.status === "done" || p.status === "error"){ clearInterval(t_); bar.style.display = "none"; }
   }, 500);
 }
 
