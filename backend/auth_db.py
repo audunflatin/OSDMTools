@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, create_engine
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, create_engine, text, inspect as sa_inspect
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timezone
 import os
@@ -72,7 +72,6 @@ class AccessRequest(Base):
 
 
 def _migrate():
-    from sqlalchemy import text, inspect as sa_inspect
     insp = sa_inspect(engine)
     user_cols = {c["name"] for c in insp.get_columns("users")}
     log_cols  = {c["name"] for c in insp.get_columns("login_log")}

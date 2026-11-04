@@ -2,7 +2,7 @@
 
 Gjennomgang av backend, prislogikk, sikkerhet og frontend, gjort 4. november 2026.
 
-**Status:** Alle kritiske, høye og middels funn (K1–K3, H1–H5, M1–M8) samt S1 (tester) er rettet eller dokumentert 4. november 2026. Struktur (S2–S10) og UX (U1–U6) gjenstår.
+**Status:** K1–K3, H1–H5, M1–M8 og S1–S9 er rettet 4. november 2026. S10 er flyttet til UX-runden (feilmeldinger må oversettes i frontend). UX (U1–U6) gjenstår.
 
 Hvert funn har en ID (K = kritisk, H = høy, M = middels, S = struktur, U = UX/GUI) slik at vi kan vise til dem når vi tar dem.
 
@@ -120,15 +120,15 @@ Med begge feilene rettet endres **0** farer.
 | ID | Funn | Forslag |
 |---|---|---|
 | S1 ✅ | **Ingen tester.** Prislogikken har ingen automatisk kontroll. K1 hadde blitt fanget av én enkel test. | Testsuite med 1076-malen som fasit: avrunding, ratioer, FIP-proporsjoner, ID-bytte, «ingen endring gir ingen endring» |
-| S2 | `main.py` er 2 966 linjer med 75 endepunkter | Del opp med `APIRouter`: auth, admin, generate, price_adjust, fare_discount, fix_osdm, excel, editor |
-| S3 | 13 nesten like side-ruter (sjekk innlogging → les HTML → sett inn `IS_ADMIN`) | Én hjelpefunksjon `serve_page(request, "fil.html")` |
-| S4 | Job-mønsteret er implementert tre ganger, med to ulike formater for fremdriftssvar | Felles `JobStore` med `start`, `progress` og `result` |
-| S5 | Struktursjekken «er dette OSDM?» er kopiert fem ganger | Én hjelpefunksjon |
-| S6 | Ubrukt kode: `_id_base`, `eur_amount`, `admin_mock.js`, `layout-preview.html`, `logo-preview.html`, og `1076-OSDM-templateBACKUP13.05.2026.json` (10 MB i git) | Slett |
-| S7 | `print()` i stedet for `logger`, og `import` inni funksjoner | Rydd |
-| S8 | `@app.on_event("startup")` er utdatert i FastAPI | `lifespan` |
-| S9 | `passlib` vedlikeholdes ikke lenger | Bytt til `hashlib.pbkdf2_hmac` direkte, eller `argon2-cffi`, med kompatibel verifisering av eksisterende hasher |
-| S10 | Feilmeldinger fra backend er hardkodet på norsk og vises som de er for engelske, tyske og andre brukere | Returner feilkoder og oversett dem i frontend |
+| S2 ✅ | `main.py` er 2 966 linjer med 75 endepunkter | Del opp med `APIRouter`: auth, admin, generate, price_adjust, fare_discount, fix_osdm, excel, editor |
+| S3 ✅ | 13 nesten like side-ruter (sjekk innlogging → les HTML → sett inn `IS_ADMIN`) | Én hjelpefunksjon `serve_page(request, "fil.html")` |
+| S4 ✅ | Job-mønsteret er implementert tre ganger, med to ulike formater for fremdriftssvar | Felles `JobStore` med `start`, `progress` og `result` |
+| S5 ✅ | Struktursjekken «er dette OSDM?» er kopiert fem ganger | Én hjelpefunksjon |
+| S6 ✅ | Ubrukt kode: `_id_base`, `eur_amount`, `admin_mock.js`, `layout-preview.html`, `logo-preview.html`, og `1076-OSDM-templateBACKUP13.05.2026.json` (10 MB i git) | Slett |
+| S7 ✅ | `print()` i stedet for `logger`, og `import` inni funksjoner | Rydd |
+| S8 ✅ | `@app.on_event("startup")` er utdatert i FastAPI | `lifespan` |
+| S9 ✅ | `passlib` vedlikeholdes ikke lenger | Bytt til `hashlib.pbkdf2_hmac` direkte, eller `argon2-cffi`, med kompatibel verifisering av eksisterende hasher |
+| S10 → UX | Feilmeldinger fra backend er hardkodet på norsk og vises som de er for engelske, tyske og andre brukere | Returner feilkoder og oversett dem i frontend |
 
 ---
 

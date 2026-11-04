@@ -52,7 +52,7 @@ Produksjonsdomene: **https://osdmtools.com**
 ```
 Browser
   ↓
-FastAPI (backend/main.py)
+FastAPI (backend/main.py + backend/routers/)
   ├─ /                    → Landingsside (landing.html) — uinnlogget
   │                       → Hoved-GUI (index.html) — innlogget
   ├─ /login               → Innlogging (login.html)

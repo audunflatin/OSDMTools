@@ -19,11 +19,37 @@ Rask referanse for Claude. Detaljert arkitektur og kontekst: `CONTEXT_PopToOSDM.
 
 `tests/test_pricing.py` bruker 1076-malen som fasit (avrunding, ratioer, ingen prisdrift, FIP-proporsjoner). `tests/test_api.py` kjører mot en midlertidig SQLite-database, aldri `users.db`. **Kjør testene etter hver endring i prislogikken.**
 
+`tests/test_auth_utils.py` sikrer at gamle passord-hasher (passlib) fortsatt verifiseres. Kjør også `.venv/bin/python -m pyflakes backend` — den fanger udefinerte navn etter flytting av kode.
+
 ---
+
+## Backend-struktur
+
+```
+backend/
+  main.py            — kun app-oppsett: lifespan, middleware (sesjon/DB-sjekk, CORS), /static, include_router
+  routers/           — én fil per tjeneste, hver med `router = APIRouter()`
+    public.py        — /, /personvern, robots/sitemap, /kontakt, /contact, /request-access
+    auth.py          — login/logout, passordbytte/glemt/reset, /min-konto, /account
+    admin.py         — /admin/* (brukere, forespørsler, logger, presentasjon)
+    generate.py      — priser fra avstandsfil (/ui/*: TEN, validering, generering, nedlasting)
+    excel.py         — OSDM → Excel (`osdm_to_xlsx_bytes`, `start_xlsx_job`)
+    price_adjust.py, fare_discount.py, fix_osdm.py, editor.py, station.py
+  core/
+    security.py      — require_login/require_admin, _rate_limit, _valid_email, _safe_filename, log_event
+    state.py         — alle stores i minnet + opprydding + jobbhjelpere (create_job, owned_job, start_file_job, file_job_progress)
+    pages.py         — serve_page(request, "fil.html", admin=False, extra={...})
+    osdm_bytes.py    — byte-nivå JSON (_find_section_span …), require_fare_delivery, read_delivery, _ijson_default
+    settings.py      — miljøvariabler
+  osdm_editor.py     — all prislogikk (ratioer, avrunding, set_prices_from_adult, scale_prices, delivery-felt)
+  auth_db.py, auth_utils.py, email_utils.py, rics_codes.py
+```
 
 ## Viktig: Når du legger til en ny tjeneste
 
 **Hver gang en ny side/tjeneste legges til, MÅ følgende oppdateres:**
+
+0. **Backend** — lag `backend/routers/<tjeneste>.py` med `router = APIRouter()`, server siden med `serve_page(request, "<side>.html")`, og legg modulen til i `include_router`-løkka nederst i `backend/main.py`. Tunge operasjoner: `def`-endepunkt + `create_job`/`start_file_job` fra `core/state.py`. Legg til tester i `tests/`.
 
 1. **`landing.html`** — legg til et nytt feature-kort (`.feat-card`) med passende SVG-ikon, `data-i18n`-tittel og -beskrivelse. Legg til de tilhørende i18n-nøklene i alle 5 språk i `i18n.js`.
 
@@ -38,7 +64,7 @@ Nye sider med filopplasting og tung backend-prosessering skal bruke en styled pr
 Ikke bruk betingede grenser basert på `localhost` vs. produksjon. Deutsche Bahn har OSDM-filer på ~1,2 GB. Grensen skal alltid være `const maxMb = 5000;`.
 
 **Tung prosessering skal bruke async job-mønster.**
-Nye endepunkter som gjør tung prosessering (JSON-parse av store filer, validering, konvertering) skal starte en bakgrunnstråd og returnere et `jobId` som frontend poller via et eget progress-endepunkt. Se `XLSX_JOBS`, `VALIDATION_JOBS`, `PARSE_JOBS` i `backend/main.py` for mønster.
+Nye endepunkter som gjør tung prosessering (JSON-parse av store filer, validering, konvertering) skal starte en bakgrunnstråd og returnere et `jobId` som frontend poller via et eget progress-endepunkt. Bruk hjelperne i `backend/core/state.py`: `start_file_job` + `file_job_progress` (validering/parsing) eller `create_job` + `owned_job` (egen tråd, se `start_xlsx_job` i `routers/excel.py`).
 
 **Tunge endepunkter skal være `def`, aldri `async def`.** FastAPI kjører `async def` på hendelsesløkken — tung synkron kode der fryser hele serveren for alle brukere. Bruk `fil.file.read()` i stedet for `await fil.read()`. Trenger du `await request.json()`, behold `async def` og kjør tungt arbeid med `await run_in_threadpool(...)`. `test_heavy_endpoints_are_sync` vokter dette.
 
@@ -69,7 +95,7 @@ Felles styling: `styles.css`. Flerspråklig: `i18n.js` (lastes før side-spesifi
 
 ## Global server-state (viktig å kjenne til)
 
-Definert øverst i `backend/main.py`:
+Definert i `backend/core/state.py`:
 
 ```python
 TEN_STORE: dict                # user_email → {"table": [(fra_km, til_km, pris)], "created_at": float}
@@ -279,7 +305,7 @@ Denne bruker `(pc, carrier, sc)` som nøkkel og beholder første forekomst (`if 
 ## Tilgangsforespørsel – endepunkt
 
 `POST /request-access` (åpent, ingen innlogging nødvendig):
-- Rate limiting: maks 3 forespørsler per IP per 24 timer (`_access_requests` i `main.py`)
+- Rate limiting: maks 3 forespørsler per IP per 24 timer (`_access_requests` i `core/security.py`)
 - Honeypot-felt (`website`) — bots avvises stille med 200 OK
 - Sender e-post til admin via `send_access_request_email()` i `email_utils.py`
 - Krever `CONTACT_EMAIL`-miljøvariabel
@@ -333,8 +359,9 @@ og oppdateres via JS — se `updateExchangeRateLabel()` i `app.js`.
 
 ## Sikkerhet – viktige mekanismer
 
+- **Passord**: PBKDF2-SHA256 i passlib-formatet, implementert med `hashlib` i `auth_utils.py` (passlib fjernet nov. 2026). Nye hasher: 600 000 runder; eldre (29 000) oppgraderes automatisk ved innlogging (`needs_rehash`).
 - **SESSION_SECRET**: logger advarsel ved oppstart hvis standardverdi brukes (ikke satt i env).
-- **Sesjonen sjekkes mot DB ved hver forespørsel** (`validate_session_user`-middleware i `main.py`): slettet/deaktivert bruker logges ut umiddelbart, `is_admin` i sesjonen oppdateres, og `must_change_password` sperrer alt unntatt `_PASSWORD_CHANGE_ALLOWED` (GET → redirect til `/change-password`, ellers 403). Middlewaren må registreres **før** `SessionMiddleware` i koden (Starlette legger sist registrerte ytterst).
+- **Sesjonen sjekkes mot DB ved hver forespørsel** (`validate_session_user`-middleware i `backend/main.py`): slettet/deaktivert bruker logges ut umiddelbart, `is_admin` i sesjonen oppdateres, og `must_change_password` sperrer alt unntatt `_PASSWORD_CHANGE_ALLOWED` (GET → redirect til `/change-password`, ellers 403). Middlewaren må registreres **før** `SessionMiddleware` i koden (Starlette legger sist registrerte ytterst).
 - **Session-cookie**: `max_age` 7 dager (`SESSION_MAX_AGE`), `Secure`-flagg på Railway (`SESSION_HTTPS_ONLY`, auto via `RAILWAY_ENVIRONMENT_NAME`), av lokalt.
 - **E-post**: all brukerinput escapes med `_esc()` i `email_utils.py`, og emnefelt renses med `_subject_safe()`. Nye e-postmaler må gjøre det samme.
 - **Ingen inline `onclick` med data fra brukere** — admin.js bruker `data-action`/`data-email` + én delegert click-listener. `escapeHtml` i en `onclick`-streng beskytter ikke (HTML-entiteter dekodes før JS kjøres). E-post valideres på serveren med `_valid_email()` i `/request-access` og `/admin/add-user`.

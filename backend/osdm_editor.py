@@ -818,6 +818,37 @@ def _apply_adult_prices(
     return {"updated_fares": updated_fares, "new_prices": new_prices_count}
 
 
+def apply_delivery_fields(
+    store_entry: dict, delivery_id: str, previous_delivery_id: str,
+    optional_delivery: str, environment: str, valid_from: str, valid_to: str,
+) -> int:
+    """Sett delivery-felt og gyldighetsperiode. Felles for generering og prisregulering.
+    Returnerer utcOffset for fra-datoen."""
+    data = store_entry["data"]
+    delivery = data["fareDelivery"]["delivery"]
+    delivery["deliveryId"] = delivery_id
+    if previous_delivery_id.strip():
+        delivery["previousDeliveryId"] = previous_delivery_id.strip()
+    else:
+        delivery.pop("previousDeliveryId", None)
+    delivery["optionalDelivery"] = (optional_delivery.lower() == "true")
+    delivery["usage"] = "TEST_ONLY" if environment == "test" else "PRODUCTION"
+    calendars = data["fareDelivery"]["fareStructure"].get("calendars", [])
+    return set_calendar_validity(calendars, valid_from, valid_to)
+
+
+def serialize_with_new_prefix(store_entry: dict, delivery_id: str) -> tuple[str, str]:
+    """Serialiser og bytt ID-prefix ({fareProvider}_{deliveryId}_) overalt.
+    Returnerer (json-tekst, fare_provider)."""
+    old_prefix = store_entry["id_prefix"]
+    fare_provider = old_prefix.split("_")[0]
+    new_prefix = f"{fare_provider}_{delivery_id}_"
+    content = json.dumps(store_entry["data"], indent=2, ensure_ascii=False)
+    if old_prefix and old_prefix != new_prefix:
+        content = content.replace(old_prefix, new_prefix)
+    return content, fare_provider
+
+
 def serialize_osdm(store_entry: dict) -> bytes:
     """Serialiser endret OSDM til JSON-bytes."""
     return json.dumps(

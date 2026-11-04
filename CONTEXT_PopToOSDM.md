@@ -25,7 +25,7 @@ Produksjonsdomene: **https://osdmtools.com**
 - **Backend:** FastAPI (Python 3.12)
 - **Frontend:** HTML / CSS / Vanilla JavaScript (servert via FastAPI)
 - **Database:** SQLite (persistent disk på Railway: `/data/users.db`)
-- **Autentisering:** Session-basert med passlib/pbkdf2_sha256
+- **Autentisering:** Session-basert, pbkdf2_sha256 via `hashlib` (passlib-kompatibelt format)
 - **Drift:** Railway (automatisk deploy fra `main`)
 - **DNS / CDN:** Cloudflare (CNAME-oppslag, ikke A-record)
 - **E-post:** Resend API
@@ -36,7 +36,9 @@ Produksjonsdomene: **https://osdmtools.com**
 
 ```
 backend/
-  main.py          — all applikasjonslogikk (FastAPI)
+  main.py          — app-oppsett (middleware, lifespan, include_router)
+  routers/         — én fil per tjeneste (se CLAUDE.md «Backend-struktur»)
+  core/            — security, state, pages, osdm_bytes, settings
   osdm_editor.py   — OSDM-parsing, ratio-inferens, priskalkulering, relasjon-tillegg
   auth_db.py       — SQLAlchemy-modeller: User, LoginLog, EventLog + migrering
   auth_utils.py    — passord-hashing og generering
@@ -107,7 +109,7 @@ som returnerer 404 for `.html`-filer). Gir auth-bypass hvis man åpner `/static/
 ### Tilgangsforespørsel (`POST /request-access`)
 - **Åpent endepunkt** — ingen innlogging nødvendig
 - **Honeypot:** skjult `website`-felt — bots fyller det ut og avvises stille
-- **Rate limiting:** maks 3 forespørsler per IP per 24 timer (`_access_requests` dict i `main.py`)
+- **Rate limiting:** maks 3 forespørsler per IP per 24 timer (`_access_requests` i `backend/core/security.py`)
 - Navn er splittet i `first_name` + `last_name` (to separate felt i skjema og DB)
 - Sender e-post til **alle aktive admins** (hentes fra DB) via `send_access_request_email()`
 - Logger hendelsen i `EventLog`
@@ -163,7 +165,7 @@ HTML-filer med v=19 (login-sider, endres sjelden):
 
 ## Global server-state
 
-Definert øverst i `backend/main.py`:
+Definert i `backend/core/state.py`:
 
 ```python
 TEN_TABLE: list | None         # Lastes ved POST /ui/validate-ten
@@ -219,7 +221,7 @@ Støtter dark mode via `@media (prefers-color-scheme: dark)` + `data-ogsc` for O
 ## Brukerhåndtering
 
 - Brukere lagres i SQLite (`/data/users.db` på Railway)
-- Passord: UUID-basert, hashes med pbkdf2_sha256 via passlib
+- Passord: hashes med pbkdf2_sha256 (`backend/auth_utils.py`, passlib-kompatibelt format)
 - Sesjon: server-side via Starlette SessionMiddleware
 
 ### Databasemodell – User

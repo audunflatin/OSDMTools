@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from backend.auth_db import SessionLocal, User, AccessRequest, init_db
 from backend.auth_utils import hash_password
 import backend.main as main
+from backend.core import security, state
+from backend.routers import public
 
 PASSWORD = "testpassord123"
 TEN_A = "0;100;500\n100;200;900\n"
@@ -34,8 +36,8 @@ def test_ten_table_is_per_user():
     a, b = _login("a@test.no"), _login("b@test.no")
     assert a.post("/ui/validate-ten", files={"tenFile": ("a.csv", TEN_A)}).json()["ok"]
     assert b.post("/ui/validate-ten", files={"tenFile": ("b.csv", TEN_B)}).json()["ok"]
-    assert main.TEN_STORE["a@test.no"]["table"][0] == (0, 100, 500)
-    assert main.TEN_STORE["b@test.no"]["table"][0] == (0, 100, 111)
+    assert state.TEN_STORE["a@test.no"]["table"][0] == (0, 100, 500)
+    assert state.TEN_STORE["b@test.no"]["table"][0] == (0, 100, 111)
 
 
 def test_progress_requires_login():
@@ -49,7 +51,7 @@ def test_progress_requires_login():
 ])
 def test_request_access_rejects_invalid_email(email):
     """Regresjon for K2: ugyldige e-poster havner aldri i admin-listen."""
-    main._access_requests.clear()
+    security._access_requests.clear()
     r = TestClient(main.app).post("/request-access", data={"email": email, "org": "Test"})
     assert r.status_code == 400
     with SessionLocal() as db:
@@ -148,14 +150,14 @@ def test_contact_requires_login():
 
 def test_contact_is_rate_limited(monkeypatch):
     sent = []
-    monkeypatch.setattr(main, "send_contact_email", lambda *a: sent.append(a))
-    main._contact_sent.clear()
+    monkeypatch.setattr(public, "send_contact_email", lambda *a: sent.append(a))
+    security._contact_sent.clear()
     client = _login("a@test.no")
     data = {"name": "A", "email": "a@test.no", "message": "hei"}
-    for _ in range(main._CONTACT_MAX):
+    for _ in range(security._CONTACT_MAX):
         assert client.post("/contact", data=data).json()["ok"]
     assert client.post("/contact", data=data).status_code == 429
-    assert len(sent) == main._CONTACT_MAX
+    assert len(sent) == security._CONTACT_MAX
 
 
 def test_emails_escape_user_input(monkeypatch):
@@ -174,14 +176,15 @@ def test_emails_escape_user_input(monkeypatch):
     assert "<script>" not in captured["html"]
 
 
-@pytest.mark.parametrize("name", [
-    "validate_distances", "osdm_to_csv", "price_adjust",
-    "fare_discount_apply", "fix_osdm", "editor_load",
+@pytest.mark.parametrize("path", [
+    "/ui/validate-distances", "/frontend/osdm-to-csv", "/price-adjust",
+    "/fare-discount/apply", "/ui/fix-osdm", "/osdm-editor/load",
 ])
-def test_heavy_endpoints_are_sync(name):
+def test_heavy_endpoints_are_sync(path):
     """H1: tunge endepunkter må være `def` så de kjøres i trådpool, ikke på hendelsesløkken."""
     import inspect
-    assert not inspect.iscoroutinefunction(getattr(main, name))
+    endpoint = next(r.endpoint for r in main.app.routes if getattr(r, "path", None) == path and "POST" in r.methods)
+    assert not inspect.iscoroutinefunction(endpoint)
 
 
 def _price_adjust(client, pct, delivery_id="7.0"):
@@ -305,7 +308,7 @@ def test_generate_reports_relations_not_covered_by_distance_file():
 
 def test_forgot_password_is_rate_limited():
     """M4: «glemt passord» skal ikke kunne brukes til å bombe noen med e-post."""
-    main._forgot_requests.clear()
+    security._forgot_requests.clear()
     client = TestClient(main.app)
     for _ in range(5):
         assert client.post("/forgot-password", data={"email": "finnes.ikke@test.no"}).status_code == 200
@@ -357,3 +360,72 @@ def test_price_adjust_uses_exact_ratios_and_leaves_no_unused_prices():
     used = {f["priceRef"] for f in fs["fares"]}
     assert {p["id"] for p in fs["prices"]} == used
     assert all("legacyAccountingIdentifier" in f for f in fs["fares"])
+
+
+def _poll(client, url, done=("done", "error"), tries=200):
+    import time
+    for _ in range(tries):
+        p = client.get(url).json()
+        if p["status"] in done:
+            return p
+        time.sleep(0.05)
+    raise AssertionError(f"Jobben ble ikke ferdig: {p}")
+
+
+def test_excel_export_job():
+    """Excel-eksport: opplasting → jobb → fremdrift → nedlasting av gyldig xlsx."""
+    import io
+    from openpyxl import load_workbook
+    from conftest import TEMPLATE_1076
+    client = _login("a@test.no")
+    job = client.post("/frontend/osdm-to-csv", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())}).json()
+    status = _poll(client, f"/frontend/osdm-to-csv-status/{job['jobId']}")
+    assert status["status"] == "done" and status["rows"] > 0
+    assert status["filename"] == "1076_7.0_prod.xlsx"
+
+    # En annen bruker får ikke se eller laste ned jobben
+    other = _login("b@test.no")
+    assert other.get(f"/frontend/osdm-to-csv-status/{job['jobId']}").status_code == 403
+
+    r = client.get(f"/frontend/osdm-to-csv-download/{job['jobId']}")
+    assert r.status_code == 200
+    ws = load_workbook(io.BytesIO(r.content)).active
+    assert ws.max_row - 8 == status["rows"]  # data starter på rad 9
+
+
+def test_excel_export_rejects_non_osdm():
+    client = _login("a@test.no")
+    r = client.post("/frontend/osdm-to-csv", files={"osdmFile": ("x.json", b'{"foo": 1}')})
+    assert r.status_code == 400
+
+
+def test_fare_discount_parse_job():
+    from conftest import TEMPLATE_1076
+    client = _login("a@test.no")
+    job = client.post("/fare-discount/parse", files={"osdmFile": ("1076.json", TEMPLATE_1076.read_bytes())}).json()
+    p = _poll(client, f"/fare-discount/parse/progress/{job['jobId']}")
+    assert p["status"] == "done"
+    result = p["result"]
+    assert result["deliveryId"] == "7.0"
+    assert result["stations"] and result["carriers"] and result["serviceClasses"]
+
+    bad = client.post("/fare-discount/parse", files={"osdmFile": ("x.json", b"ikke json")}).json()
+    p = _poll(client, f"/fare-discount/parse/progress/{bad['jobId']}")
+    assert p == {"status": "error", "percent": 0, "result": None, "error": "Filen er ikke gyldig JSON"}
+
+
+def test_validate_osdm_invalid_json_reports_error():
+    """Regresjon: ugyldig JSON ga «reading 26 %» for alltid i stedet for feil."""
+    client = _login("a@test.no")
+    job = client.post("/ui/validate-osdm", files={"osdmFile": ("x.json", b"ikke json")}).json()
+    p = _poll(client, f"/ui/validate-osdm/progress/{job['jobId']}")
+    assert p["status"] == "error" and p["error"] == "Filen er ikke gyldig JSON"
+
+
+def test_login_upgrades_old_password_hash():
+    """Hasher med 29 000 runder (passlib) oppgraderes ved vellykket innlogging."""
+    from backend.auth_utils import hash_password, needs_rehash
+    _set_user("f@test.no", password_hash=hash_password(PASSWORD, rounds=29000))
+    _login("f@test.no")
+    with SessionLocal() as db:
+        assert not needs_rehash(db.query(User).filter(User.email == "f@test.no").first().password_hash)
